@@ -1,0 +1,17 @@
+{
+  "cdp_url": "http://127.0.0.1:9222",
+  "brand_keyword": "巴拉巴拉",
+  "compass_start_date": "2026-08-02",
+  "compass_end_date": "2026-08-02",
+  "vipdirect_start_date": "2026-08-02",
+  "vipdirect_end_date": "2026-08-02",
+  "tmax_start_date": "2026-08-02",
+  "tmax_end_date": "2026-08-02",
+  "bct_gift_activity_start": "2026-07-29",
+  "bct_gift_activity_end": "2026-08-06",
+  "bct_scene_activity_start": "2026-07-29",
+  "bct_scene_activity_end": "2026-08-06",
+  "page_size": 300,
+  "bct_page_size": 50,
+  "max_pages": 300
+}

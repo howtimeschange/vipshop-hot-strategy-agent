@@ -1,0 +1,136 @@
+# 唯品会爆款策略追踪 Agent
+
+这是一个独立的 CLI + skill 项目，用来把唯品会爆款策略复盘中常用的 5 份报表采集、导出、分析和策略总结固化成可重复执行的本地工具。
+
+项目默认走只读链路：通过用户已经登录的 Chrome CDP 9222 会话复用页面上下文，调用页面自己的报表接口读取数据，不读取或保存 cookie、token、localStorage、sessionStorage，也不修改广告、礼金、优惠券、预算、出价或商品配置。
+
+## 核心能力
+
+| 命令 | 用途 | 输出 |
+| --- | --- | --- |
+| `collect` | 从 9222 浏览器只读采集 5 份报表 | Excel 工作簿 |
+| `analyze` | 分析已有 Excel 工作簿 | `analysis.json`、`strategy.md` |
+| `run` | 先采集再分析 | Excel、JSON、Markdown |
+| `doc-summary` | 生成需求文档理解摘要 | Markdown |
+
+当前覆盖 5 张报表：
+
+- 魔方罗盘销售明细
+- 唯直达投放效果
+- T-max 商品打爆效果
+- 中台礼金
+- 中台购物车/跨品类券
+
+## 安装
+
+```bash
+cd /Users/xingyicheng/Documents/vipshop-hot-strategy-agent
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install -e .
+```
+
+如果只想直接用源码运行，也可以：
+
+```bash
+PYTHONPATH=src python3 -m vipshop_hot_strategy_agent.cli --help
+```
+
+## 使用示例
+
+分析已经导出的工作簿：
+
+```bash
+vipshop-hot-strategy analyze \
+  /Users/xingyicheng/Downloads/唯品会爆款策略追踪报表_20260803-171542.xlsx \
+  --out-dir /Users/xingyicheng/Downloads
+```
+
+在已登录的 9222 Chrome 中重新采集并分析：
+
+```bash
+vipshop-hot-strategy run \
+  --cdp-url http://127.0.0.1:9222 \
+  --brand-keyword 巴拉巴拉 \
+  --compass-start-date 2026-08-02 \
+  --compass-end-date 2026-08-02 \
+  --vipdirect-start-date 2026-08-02 \
+  --vipdirect-end-date 2026-08-02 \
+  --tmax-start-date 2026-08-02 \
+  --tmax-end-date 2026-08-02 \
+  --bct-gift-activity-start 2026-07-29 \
+  --bct-gift-activity-end 2026-08-06 \
+  --bct-scene-activity-start 2026-07-29 \
+  --bct-scene-activity-end 2026-08-06 \
+  --out-dir /Users/xingyicheng/Downloads
+```
+
+如果 9222 Chrome 同时打开了多个唯品会相关标签页，请传入 `--tab-id` 或 `--url-prefix`，显式选择要复用的页面。
+
+生成需求理解摘要：
+
+```bash
+vipshop-hot-strategy doc-summary --out-dir /Users/xingyicheng/Downloads
+```
+
+## 时间范围参数
+
+5 张报表可以独立指定导出时间范围：
+
+| 报表 | 参数 |
+| --- | --- |
+| 魔方罗盘销售明细 | `--compass-start-date` / `--compass-end-date` |
+| 唯直达投放效果 | `--vipdirect-start-date` / `--vipdirect-end-date` |
+| T-max 商品打爆效果 | `--tmax-start-date` / `--tmax-end-date` |
+| 中台礼金 | `--bct-gift-activity-start` / `--bct-gift-activity-end` |
+| 中台购物车/跨品类券 | `--bct-scene-activity-start` / `--bct-scene-activity-end` |
+
+`--bct-activity-start` 和 `--bct-activity-end` 保留为礼金、购物车/跨品类券的共用 fallback。
+
+## 输出口径
+
+`analysis.json` 保留机器可读指标，适合继续接 BI、周报或其他 agent。
+
+`strategy.md` 面向运营复盘，包含：
+
+- 数据覆盖和各 sheet 行数
+- 商品曝光、点击、商详 UV、购买转化率、加购率
+- 唯直达和 T-max 的曝光、点击、CTR、CPC、成交、ROI
+- 礼金和购物车/跨品类券的使用销售额、使用人数、成本和 ROI 可算性
+- 效果标签、置信度解释、保留/放大/观察/回滚/补数据建议
+
+项目会严格区分 `0` 和缺失口径：只有页面接口明确返回数值 0 时才展示为 `0`；如果接口没有返回触达、订单、活动成本或 ROI 等字段，Markdown 会展示为 `未返回` 或 `不可算`，避免把空字段误判成业务无效果。
+
+## 项目结构
+
+```text
+assets/                              5 报表页面采集脚本
+docs/                                原始需求文档和提取后的需求文本
+examples/                            CLI 参数示例
+references/                          指标规则和安全边界
+scripts/quick_validate.py            项目形态检查
+skills/vipshop-hot-strategy-agent/   可安装或引用的 agent skill
+src/vipshop_hot_strategy_agent/      CLI、采集、导出、分析代码
+tests/                               离线单元测试
+```
+
+## 验证
+
+```bash
+node --check assets/hot-strategy-tracking-report.js
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/quick_validate.py
+```
+
+真实采集验证需要本机已有可用的 Chrome CDP 9222 登录态。采集链路仍然只读，输出到本地目录。
+
+## 当前边界
+
+当前版本先把已经验证的 5 份报表打通成可复用 CLI。需求文档里的动作记录、产品基础信息、实验组/参考组、活动周期解析、触达/领取、毛利和售后质量，是下一阶段增强项；CLI 会在策略报告里明确这些数据缺口，避免把投放或权益带来的销售波动过度归因到单个运营动作。
+
+## 安全说明
+
+- 不提交、保存、发布、删除、付款、下单。
+- 不批量修改营销活动、预算、出价、券、礼金、人群或商品配置。
+- 不读取、打印、保存或转存 cookie、token、localStorage、sessionStorage、二维码、身份信息、支付信息。
+- 公开仓库只包含采集和分析代码、需求说明、示例参数和测试，不包含真实导出结果或登录态。

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vipshop-hot-strategy-agent"
+version = "0.1.0"
+description = "Read-only Vipshop hot strategy report collector plus insight and strategy CLI."
+requires-python = ">=3.10"
+dependencies = [
+  "openpyxl>=3.1.0",
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+vipshop-hot-strategy = "vipshop_hot_strategy_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vipshop_hot_strategy_agent = ["py.typed"]
