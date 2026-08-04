@@ -13,16 +13,18 @@
 
   const COMPASS_PAGE_URL = 'https://compass.vip.com/frontend/index.html#/product/details'
   const BCT_PAGE_URL = 'https://bct.vip.com/vendor_new_v2/index.html#/frontend/strategyEffect/list?tab=userLifecycle'
-  const VIPDIRECT_PAGE_URL = 'https://e.vip.com/upgrade.html#/promotion/insite/search/adList'
+  const VIPDIRECT_PAGE_URL = 'https://e.vip.com/upgrade.html#/promotion/insite/search/advertisement'
   const VIPDIRECT_SUMMARY_PAGE_URL = 'https://e.vip.com/upgrade.html#/promotion/insite/search/report'
   const TMAX_PAGE_URL = 'https://e.vip.com/upgrade.html#/promotion/tmax/sptg/report-goods'
   const GOODS_DETAIL_URL = '/product/detail/getGoodsList'
-  const COMPASS_EXPORT_SUBMIT_URL = '/pc/mms/v1/item/export'
-  const COMPASS_EXPORT_TASK_LIST_URL = '/pc/mms/v1/item/export/task/list'
+  const COMPASS_EXPORT_SUBMIT_URL = '/product/detail/asyncExportGoodsList'
+  const COMPASS_EXPORT_TASK_LIST_URL = '/report/asyncdownload/queryTaskList'
+  const COMPASS_EXPORT_FILE_URL = '/report/asyncdownload/getOutputFile'
   const BCT_AVAILABLE_BRAND_URL = '/bcc/authority/available_brand?_check_empty=1'
   const BCT_TOOLBOX_LIST_URL = '/bcc/toolbox_task/list'
   const BCT_DOWNLOAD_CENTER_ADD_URL = '/bcc/vendorBrand/downCenter/add'
   const BCT_DOWNLOAD_CENTER_PAGE_URL = '/bcc/vendorBrand/downCenter/page'
+  const BCT_FILE_SECURITY_DOWN_URL = '/bcc/file_common/fileSecurityDown'
   const MARKETING_CURRENT_USER_URL = '/user/current'
   const VIPDIRECT_AD_LIST_URL = '/ad/list/v2'
   const VIPDIRECT_PRODUCT_INSIGHT_AD_LIST_URL = '/product/insight/ad/list'
@@ -215,7 +217,7 @@
   }
 
   function getPageSize(kind = 'default', rawParams = params) {
-    const max = kind === 'bct' ? 300 : 500
+    const max = kind === 'bct' ? 300 : (kind === 'vipdirect' ? 100 : 500)
     const min = kind === 'bct' ? 10 : 20
     const specificKey = `${kind}_page_size`
     const raw = Number(rawParams[specificKey] || rawParams.page_size || DEFAULT_PAGE_SIZE) || DEFAULT_PAGE_SIZE
@@ -244,9 +246,11 @@
 
   function isMarketingLoggedInPage(href = currentHref(), bodyText = document?.body?.innerText || '') {
     const text = compact(bodyText)
+    const url = String(href || '')
+    const looksLikeMarketingShell = /^https:\/\/e\.vip\.com\/upgrade\.html/i.test(url)
     return /^https:\/\/e\.vip\.com\//i.test(String(href || ''))
       && !/passport\.vip\.com|登录|扫码登录|账号登录/i.test(`${href} ${text}`)
-      && /唯直达|Target-Max|T-max|广告|投放|商品打爆|营销平台|账户/i.test(text)
+      && (looksLikeMarketingShell || /唯直达|Target-Max|T-max|广告|投放|商品打爆|营销平台|账户/i.test(text))
   }
 
   function complete(data = [], nextShared = shared) {
@@ -323,10 +327,46 @@
       const text = await response.text().catch(() => '')
       throw new Error(`${url} HTTP ${response.status}：${text.slice(0, 160)}`)
     }
+    const contentType = response.headers.get('content-type') || ''
     const arrayBuffer = await response.arrayBuffer()
+    throwIfDownloadLooksLikeError(url, contentType, arrayBuffer)
     return {
       base64: arrayBufferToBase64(arrayBuffer),
-      contentType: response.headers.get('content-type') || '',
+      contentType,
+      fileName: filenameFromContentDisposition(response.headers.get('content-disposition') || ''),
+      byteLength: arrayBuffer.byteLength,
+    }
+  }
+
+  function payloadToFormData(payload = {}) {
+    const formData = new FormData()
+    for (const [key, value] of Object.entries(payload || {})) {
+      if (Array.isArray(value)) {
+        value.forEach(item => formData.append(key, rawValue(item)))
+      } else if (value != null) {
+        formData.append(key, rawValue(value))
+      }
+    }
+    return formData
+  }
+
+  async function postFormBlob(url, payload, extraHeaders = {}) {
+    const response = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', ...extraHeaders },
+      body: payloadToFormData(payload),
+    })
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`${url} HTTP ${response.status}：${text.slice(0, 160)}`)
+    }
+    const contentType = response.headers.get('content-type') || ''
+    const arrayBuffer = await response.arrayBuffer()
+    throwIfDownloadLooksLikeError(url, contentType, arrayBuffer)
+    return {
+      base64: arrayBufferToBase64(arrayBuffer),
+      contentType,
       fileName: filenameFromContentDisposition(response.headers.get('content-disposition') || ''),
       byteLength: arrayBuffer.byteLength,
     }
@@ -364,13 +404,33 @@
       const text = await response.text().catch(() => '')
       throw new Error(`${url} HTTP ${response.status}：${text.slice(0, 160)}`)
     }
+    const contentType = response.headers.get('content-type') || ''
     const arrayBuffer = await response.arrayBuffer()
+    throwIfDownloadLooksLikeError(url, contentType, arrayBuffer)
     return {
       base64: arrayBufferToBase64(arrayBuffer),
-      contentType: response.headers.get('content-type') || '',
+      contentType,
       fileName: filenameFromContentDisposition(response.headers.get('content-disposition') || ''),
       byteLength: arrayBuffer.byteLength,
     }
+  }
+
+  function throwIfDownloadLooksLikeError(url, contentType, arrayBuffer) {
+    const lowered = compact(contentType).toLowerCase()
+    if (!/json|html/.test(lowered)) return
+    const preview = new TextDecoder('utf-8').decode(arrayBuffer.slice(0, 240)).trim()
+    throw new Error(`${url} 返回的不是可解析报表文件：${preview}`)
+  }
+
+  function withQuery(url, payload = {}) {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(payload || {})) {
+      if (Array.isArray(value)) value.forEach(item => query.append(key, rawValue(item)))
+      else if (value != null) query.append(key, rawValue(value))
+    }
+    const text = query.toString()
+    if (!text) return url
+    return `${url}${String(url).includes('?') ? '&' : '?'}${text}`
   }
 
   function arrayBufferToBase64(buffer) {
@@ -808,6 +868,55 @@
     return compact(rawParams.compass_export_task_list_url || COMPASS_EXPORT_TASK_LIST_URL) || COMPASS_EXPORT_TASK_LIST_URL
   }
 
+  function compassExportFileUrl(rawParams = params) {
+    return compact(rawParams.compass_export_file_url || COMPASS_EXPORT_FILE_URL) || COMPASS_EXPORT_FILE_URL
+  }
+
+  function deferredDownloadFile({
+    url = '',
+    method = 'GET',
+    payload = null,
+    fileName = '',
+    contentType = '',
+    downType = '',
+    fetchError = '',
+  } = {}) {
+    const absoluteUrl = (() => {
+      const text = compact(url)
+      if (!text) return ''
+      try {
+        return new URL(text, location.origin).href
+      } catch (error) {
+        return text
+      }
+    })()
+    return {
+      base64: '',
+      contentType: compact(contentType),
+      fileName: compact(fileName),
+      byteLength: '',
+      downType: compact(downType),
+      downloadUrl: absoluteUrl,
+      downloadMethod: compact(method || 'GET').toUpperCase(),
+      downloadPayload: payload == null ? '' : safeJson(payload),
+      deferredDownload: true,
+      fetchError: compact(fetchError),
+    }
+  }
+
+  async function firstSuccessfulBlobDownload(candidates) {
+    const errors = []
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate.fetcher !== 'function') continue
+      try {
+        return await candidate.fetcher()
+      } catch (error) {
+        errors.push(`${candidate.label || 'download'}：${error.message || error}`)
+      }
+    }
+    throw new Error(errors.join('；') || '没有可用下载方式。')
+  }
+
   function stableClientKey(prefix, payload) {
     const text = safeJson(payload)
     let hash = 0
@@ -821,20 +930,43 @@
     const explicit = parseJsonObject(rawParams.compass_export_payload)
     if (Object.keys(explicit).length) return explicit
     const query = buildGoodsDetailPayload(1, getPageSize('compass', rawParams), dateRange, rawParams)
+    const brandStoreSn = compact(rawParams.compass_brand_store_sn || rawParams.brand_store_sn || rawParams.brandStoreSn || 'all') || 'all'
+    const exportFilter = compact(rawParams.compass_export_filter)
+      || 'merchandiseNo,dt,goodsName,goodsNo,osn,prodSpuId,imgUrl,merTypeList,brandStoreSn,brandStoreName,uv,goodsActureAmt,goodsActureNum,userNum,bctNewUser,onSellLeavingNum,addUserNum,addItemNum,merchandiseLikeUserNum'
     const payload = {
-      ...query,
-      pageNo: 1,
-      pageSize: getPageSize('compass', rawParams),
+      brandStoreSnSet: brandStoreSn === 'all' ? ['all'] : [brandStoreSn],
+      calType: query.calType,
+      channelType: query.channelType,
+      dimType: Number(rawParams.compass_export_dim_type ?? rawParams.compass_dim_type ?? 0),
+      dtType: query.dtType,
       startDt: dateRange.startDt,
       endDt: dateRange.endDt,
-      brandKeyword: compassBrandKeyword(rawParams),
-      onlySelectedBrand: compassBalaOnly(rawParams),
-      exportType: compact(rawParams.compass_export_type || 'product_detail'),
-      taskType: compact(rawParams.compass_export_task_type || 'product_detail'),
-      bizType: compact(rawParams.compass_export_biz_type || 'product_detail'),
-      scene: 'product_details',
-      idempotentKey: stableClientKey('compass_goods_detail', query),
+      filter: exportFilter,
+      queryExtendMetric: /bctNewUser|svip|brand|addUserNum|addItemNum|merchandiseLikeUserNum/.test(exportFilter),
+      queryHll: parseBooleanFlag(rawParams.compass_query_hll, false),
+      specialMenusUser: parseBooleanFlag(rawParams.compass_special_menus_user, false),
     }
+    return payload
+  }
+
+  function compassDownloadTaskType(rawParams = params) {
+    const value = Number(rawParams.compass_download_task_type || rawParams.compass_task_type || 1)
+    return Number.isFinite(value) && value > 0 ? value : 1
+  }
+
+  function compassDownloadCreateDate(rawParams = params) {
+    return compact(rawParams.compass_download_create_date || rawParams.compass_export_create_date || ymdFromOffsetMs(Date.now()))
+  }
+
+  function buildCompassTaskListPayload(rawParams = params, extra = {}) {
+    const payload = {
+      taskType: compassDownloadTaskType(rawParams),
+      createDate: compassDownloadCreateDate(rawParams),
+      ...extra,
+    }
+    Object.keys(payload).forEach(key => {
+      if (!hasText(payload[key])) delete payload[key]
+    })
     return payload
   }
 
@@ -862,14 +994,9 @@
     return []
   }
 
-  async function snapshotCompassExportTasks(rawParams = params) {
+  async function snapshotCompassExportTasks(rawParams = params, extra = {}) {
     const url = compassExportTaskListUrl(rawParams)
-    const queryUrl = `${url}${url.includes('?') ? '&' : '?'}pageNo=1&pageSize=20`
-    try {
-      return await getJson(queryUrl)
-    } catch (getError) {
-      return postJson(url, { pageNo: 1, pageSize: 20 })
-    }
+    return postJson(url, buildCompassTaskListPayload(rawParams, extra))
   }
 
   function exportTaskStatus(task) {
@@ -878,13 +1005,13 @@
 
   function exportTaskDone(task) {
     const status = exportTaskStatus(task)
-    return ['2', '3', 'SUCCESS', 'SUCCESSFUL', 'FINISHED', 'DONE', 'COMPLETED', '生成成功'].includes(status)
-      || hasText(task?.downloadUrl || task?.downUrl || task?.fileUrl || task?.url || task?.fileLink)
+    return ['2', '3', '5', 'SUCCESS', 'SUCCESSFUL', 'FINISHED', 'DONE', 'COMPLETED', '生成成功', '执行成功'].includes(status)
+      || hasText(task?.downloadUrl || task?.downUrl || task?.fileUrl || task?.url || task?.fileLink || task?.outputFileVosKey)
   }
 
   function exportTaskFailed(task) {
     const status = exportTaskStatus(task)
-    return ['4', '5', 'FAIL', 'FAILED', 'ERROR', '生成失败', '已失效'].includes(status)
+    return ['4', '6', '7', 'FAIL', 'FAILED', 'ERROR', '生成失败', '执行异常', '取消任务', '已失效'].includes(status)
   }
 
   function exportTaskId(task) {
@@ -895,9 +1022,16 @@
     const expectedTaskId = compact(context.taskId)
     if (expectedTaskId && exportTaskId(task) === expectedTaskId) return true
     const createdAtMs = millisFromValue(task?.createTime || task?.createdAt || task?.gmtCreate)
-    if (createdAtMs && createdAtMs < context.submittedAtMs - 120000) return false
+    if (!context.allowExisting && createdAtMs && createdAtMs < context.submittedAtMs - 120000) return false
+    const taskType = Number(task?.taskType)
+    if (Number.isFinite(taskType) && Number.isFinite(Number(context.taskType)) && taskType !== Number(context.taskType)) return false
+    const requestParams = parseJsonObject(task?.requestParams)
+    if (requestParams.startDt && context.payload?.startDt && compact(requestParams.startDt) !== compact(context.payload.startDt)) return false
+    if (requestParams.endDt && context.payload?.endDt && compact(requestParams.endDt) !== compact(context.payload.endDt)) return false
+    if (requestParams.dimType != null && context.payload?.dimType != null && Number(requestParams.dimType) !== Number(context.payload.dimType)) return false
     const text = [
       task?.fileName,
+      task?.outputFileName,
       task?.taskName,
       task?.name,
       task?.configKey,
@@ -906,8 +1040,22 @@
       task?.taskType,
       task?.downloadUrl,
       task?.downModel,
+      task?.requestParams,
     ].map(rawValue).join(' ')
-    return /商品|货品|明细|product|goods|item/i.test(text)
+    return /商品|货品|明细|product|goods|item|merchandiseNo/i.test(text)
+  }
+
+  async function findExistingCompassExportTask(payload, rawParams = params) {
+    const json = await snapshotCompassExportTasks(rawParams)
+    const tasks = extractTaskRows(json)
+    const context = {
+      taskId: '',
+      taskType: compassDownloadTaskType(rawParams),
+      submittedAtMs: 0,
+      allowExisting: true,
+      payload,
+    }
+    return tasks.find(task => compassExportTaskMatches(task, context) && exportTaskDone(task)) || null
   }
 
   async function waitForCompassExportTask(context, rawParams = params) {
@@ -933,23 +1081,71 @@
     return postJson(submitUrl, payload)
   }
 
-  async function downloadExportTaskFile(task, fallbackName) {
+  async function downloadExportTaskFile(task, fallbackName, rawParams = params) {
+    if (exportTaskId(task) && (task?.outputFileName || task?.outputFileVosKey || Number.isFinite(Number(task?.taskType)))) {
+      const file = await postFormBlob(compassExportFileUrl(rawParams), {
+        reqData: safeJson({ taskId: exportTaskId(task) }),
+      })
+      return {
+        ...file,
+        fileName: compact(task?.outputFileName) || compact(task?.fileName) || file.fileName || fallbackName,
+      }
+    }
     const model = normalizeDownModel(task)
     const modelUrl = compact(model?.fileLink || model?.downloadUrl || model?.downUrl || model?.url)
     const url = compact(task?.downloadUrl || task?.downUrl || task?.fileUrl || task?.url || task?.fileLink || modelUrl)
     if (!url) throw new Error('导出任务未返回下载 URL。')
     if (model?.param && model?.url && compact(model?.downType) !== 'FILE_LINK') {
       const payload = parseJsonObject(model.param)
-      const file = await postBlob(model.url, payload)
+      try {
+        const file = await postBlob(model.url, payload)
+        return {
+          ...file,
+          fileName: file.fileName || compact(task?.fileName) || fallbackName,
+        }
+      } catch (error) {
+        return deferredDownloadFile({
+          url: model.url,
+          method: 'POST',
+          payload,
+          fileName: compact(task?.fileName) || fallbackName,
+          downType: compact(model?.downType || 'CUSTOMIZE'),
+          fetchError: error.message || String(error),
+        })
+      }
+    }
+    try {
+      const file = await getBlob(url)
       return {
         ...file,
         fileName: file.fileName || compact(task?.fileName) || fallbackName,
       }
+    } catch (error) {
+      return deferredDownloadFile({
+        url,
+        method: 'GET',
+        fileName: compact(task?.fileName) || fallbackName,
+        downType: compact(model?.downType || 'FILE_LINK'),
+        fetchError: error.message || String(error),
+      })
     }
-    const file = await getBlob(url)
+  }
+
+  function buildCompassExportFailureRow(error, dateRange, rawParams = params) {
     return {
-      ...file,
-      fileName: file.fileName || compact(task?.fileName) || fallbackName,
+      __sheet_name: COMPASS_SHEET,
+      报表来源: '魔方罗盘销售明细',
+      数据分组: '商品明细后台导出',
+      品牌编码: compact(rawParams.compass_brand_store_sn || rawParams.brand_store_sn || ''),
+      品牌名称: compassBrandKeyword(rawParams),
+      统计日期: `${formatDate(dateRange.startDt)} 至 ${formatDate(dateRange.endDt)}`,
+      数据来源接口: `${compassExportSubmitUrl(rawParams)} -> ${compassExportTaskListUrl(rawParams)}`,
+      执行结果: '后台导出失败',
+      备注: [
+        '默认不再降级页面表格接口，避免受 10000 条上限影响',
+        `错误：${error.message || error}`,
+        '如只需排查页面表格，可显式传 --compass-table-api 或 --compass-table-fallback。',
+      ].filter(Boolean).join('；'),
     }
   }
 
@@ -957,10 +1153,27 @@
     const dateRange = extractCompassDateRange(rawParams)
     const payload = buildCompassExportPayload(dateRange, rawParams)
     const submittedAtMs = Date.now()
-    const submitJson = await submitCompassExportTask(payload, rawParams)
-    const submittedTaskId = extractTaskId(submitJson)
+    let submitJson = null
+    let submittedTaskId = ''
+    let existingTask = null
+    if (!parseBooleanFlag(rawParams.compass_force_new_export, false)) {
+      try {
+        existingTask = await findExistingCompassExportTask(payload, rawParams)
+      } catch (error) {
+        existingTask = null
+      }
+    }
+    if (!existingTask) {
+      submitJson = await submitCompassExportTask(payload, rawParams)
+      const submitResult = Number(submitJson?.data?.result)
+      if (Number.isFinite(submitResult) && ![0, 1].includes(submitResult)) {
+        throw new Error(submitJson?.data?.msg || submitJson?.msg || '魔方后台导出任务创建失败')
+      }
+      submittedTaskId = extractTaskId(submitJson)
+    }
     const context = {
       taskId: submittedTaskId,
+      taskType: compassDownloadTaskType(rawParams),
       submittedAtMs,
       payload,
     }
@@ -969,10 +1182,13 @@
     let downloadError = ''
     if (compassDownloadWaitMs(rawParams) > 0) {
       try {
-        const waitResult = await waitForCompassExportTask(context, rawParams)
-        downloadTask = waitResult.task
+        downloadTask = existingTask
+        if (!downloadTask) {
+          const waitResult = await waitForCompassExportTask(context, rawParams)
+          downloadTask = waitResult.task
+        }
         if (downloadTask && exportTaskDone(downloadTask)) {
-          downloadFile = await downloadExportTaskFile(downloadTask, 'compass-product-detail.xlsx')
+          downloadFile = await downloadExportTaskFile(downloadTask, 'compass-product-detail.xlsx', rawParams)
         }
       } catch (error) {
         downloadError = error.message || String(error)
@@ -982,19 +1198,20 @@
     const status = exportTaskStatus(downloadTask)
     const resultText = downloadFile?.base64
       ? '已下载后台导出文件'
-      : (downloadError ? '后台导出文件读取失败' : (exportTaskFailed(downloadTask) ? '后台导出失败' : '已提交后台导出'))
+      : (downloadFile?.downloadUrl ? '已获取后台导出下载链接' : (downloadError ? '后台导出文件读取失败' : (exportTaskFailed(downloadTask) ? '后台导出失败' : '已提交后台导出')))
     const row = {
       __sheet_name: COMPASS_SHEET,
       报表来源: '魔方罗盘销售明细',
       数据分组: '商品明细后台导出',
-      品牌编码: compact(payload.brandStoreSn),
+      品牌编码: Array.isArray(payload.brandStoreSnSet) ? payload.brandStoreSnSet.join(',') : compact(payload.brandStoreSn || ''),
       品牌名称: compassBrandKeyword(rawParams),
       统计日期: `${formatDate(dateRange.startDt)} 至 ${formatDate(dateRange.endDt)}`,
-      数据来源接口: `${compassExportSubmitUrl(rawParams)} -> ${compassExportTaskListUrl(rawParams)}`,
+      数据来源接口: `${compassExportSubmitUrl(rawParams)} -> ${compassExportTaskListUrl(rawParams)} -> ${compassExportFileUrl(rawParams)}`,
       执行结果: resultText,
       备注: [
         '来源：魔方后台下载导出，避开页面商品明细 10000 条表格上限',
         compassBalaOnly(rawParams) ? `仅保留品牌 ${compassBrandKeyword(rawParams) || '巴拉巴拉'} 数据` : '未限制品牌',
+        existingTask ? '复用下载中心已成功任务并自动下载' : '',
         taskId ? `任务ID ${taskId}` : '',
         status ? `任务状态 ${status}` : '',
         downloadError ? `下载/解析待处理：${downloadError}` : '',
@@ -1004,23 +1221,27 @@
       下载文件类型: compact(downloadFile?.contentType || downloadFile?.downType),
       下载文件字节数: downloadFile?.byteLength || '',
     }
-    if (downloadFile?.base64) {
-      row.__attachment_base64 = downloadFile.base64
+    if (downloadFile?.base64 || downloadFile?.downloadUrl) {
+      row.__attachment_base64 = downloadFile.base64 || ''
       row.__attachment_file_name = downloadFile.fileName || compact(downloadTask?.fileName) || 'compass-product-detail.xlsx'
       row.__attachment_content_type = downloadFile.contentType || ''
       row.__attachment_sheet_name = COMPASS_SHEET
+      row.__attachment_download_url = downloadFile.downloadUrl || ''
+      row.__attachment_download_method = downloadFile.downloadMethod || ''
+      row.__attachment_download_payload = downloadFile.downloadPayload || ''
+      row.__attachment_download_error = downloadFile.fetchError || ''
       row.__attachment_context = safeJson({
         sheet: COMPASS_SHEET,
         sourceLabel: '魔方罗盘销售明细',
         groupLabel: '商品明细',
-        brandStoreSn: compact(payload.brandStoreSn),
+        brandStoreSn: Array.isArray(payload.brandStoreSnSet) ? payload.brandStoreSnSet.join(',') : compact(payload.brandStoreSn || ''),
         brandName: compassBrandKeyword(rawParams),
         brandKeyword: compassBrandKeyword(rawParams),
         balaOnly: compassBalaOnly(rawParams),
         exportLabel: '后台下载导出商品明细',
         configKey: 'compass_product_detail_export',
         taskId,
-        sourceApi: `${compassExportSubmitUrl(rawParams)} -> ${compassExportTaskListUrl(rawParams)}`,
+        sourceApi: `${compassExportSubmitUrl(rawParams)} -> ${compassExportTaskListUrl(rawParams)} -> ${compassExportFileUrl(rawParams)}`,
       })
     }
     return {
@@ -1030,6 +1251,7 @@
       dateRange,
       mode: 'backend_export',
       downloaded: Boolean(downloadFile?.base64),
+      downloadReady: Boolean(downloadFile?.base64 || downloadFile?.downloadUrl),
       taskId,
       downloadStatus: status,
     }
@@ -1063,10 +1285,21 @@
     if (parseBooleanFlag(rawParams.compass_table_api, false)) {
       return collectCompassSalesRowsByTable(rawParams)
     }
+    const dateRange = extractCompassDateRange(rawParams)
     try {
       return await collectCompassSalesRowsByExport(rawParams)
     } catch (error) {
       if (parseBooleanFlag(rawParams.compass_export_required, false)) throw error
+      if (!parseBooleanFlag(rawParams.compass_table_fallback, false)) {
+        return {
+          rows: [buildCompassExportFailureRow(error, dateRange, rawParams)],
+          total: 0,
+          pages: 0,
+          dateRange,
+          mode: 'backend_export_failed',
+          exportError: error.message || String(error),
+        }
+      }
       const tableResult = await collectCompassSalesRowsByTable(rawParams)
       return {
         ...tableResult,
@@ -1189,15 +1422,28 @@
 
   function buildVipDirectAdListPayload(pageNo, pageSize, dateRange, rawParams = params) {
     const payload = {
+      uiStatus: parseList(rawParams.vipdirect_ui_status || rawParams.ui_status).length
+        ? parseList(rawParams.vipdirect_ui_status || rawParams.ui_status)
+        : ['PAUSED', 'ELIGIBLE', 'INELIGIBLE', 'PENDING', 'ENDED'],
+      pauseCodes: parseList(rawParams.vipdirect_pause_codes || rawParams.pause_codes).length
+        ? parseList(rawParams.vipdirect_pause_codes || rawParams.pause_codes)
+        : ['USER_PAUSE', 'SYS_PAUSE', 'DEFAULT'],
+      dealTypes: compact(rawParams.vipdirect_deal_types || rawParams.vipdirect_deal_type || rawParams.deal_type || '1') || '1',
       deliveryChannel: 104,
       start: dateRange.startMs,
       end: dateRange.endMs,
       pageIndex: pageNo,
       pageCount: pageSize,
       columnList: vipDirectColumnList(rawParams),
+      auditStatuses: compact(rawParams.vipdirect_audit_statuses || rawParams.audit_statuses || '2,3,1') || '2,3,1',
+      deepActionType: hasText(rawParams.vipdirect_deep_action_type || rawParams.deep_action_type)
+        ? Number(rawParams.vipdirect_deep_action_type || rawParams.deep_action_type)
+        : -1,
+      operateSuggestionsTypes: hasText(rawParams.vipdirect_operate_suggestions_types || rawParams.operate_suggestions_types)
+        ? Number(rawParams.vipdirect_operate_suggestions_types || rawParams.operate_suggestions_types)
+        : -1,
+      from: Number(rawParams.vipdirect_from || 20),
     }
-    const dealTypes = parseList(rawParams.vipdirect_deal_types || rawParams.vipdirect_deal_type || rawParams.deal_type)
-    if (dealTypes.length) payload.dealTypes = dealTypes.join(',')
     const passthrough = {
       name: rawParams.vipdirect_ad_name || rawParams.vipdirect_ad_title || rawParams.ad_title,
       campaignId: rawParams.vipdirect_campaign_id || rawParams.campaign_id,
@@ -1212,6 +1458,18 @@
     }
     if (hasText(payload.adIds) && typeof payload.adIds === 'string') payload.adIds = parseList(payload.adIds)
     return payload
+  }
+
+  function meaningfulGoodsId(...values) {
+    for (const value of values) {
+      const text = compact(value)
+      if (text && text !== '0') return text
+    }
+    return ''
+  }
+
+  function vipDirectMid(rawParams = params) {
+    return compact(rawParams.vipdirect_mid || rawParams.mid)
   }
 
   function extractVipDirectAdListRows(json) {
@@ -1286,7 +1544,15 @@
         return [value]
       }
     }
-    const directGoodsId = firstNonEmpty(row?.goodsId, row?.spuId, row?.mid, row?.sdpaGoodsId, row?.wakeupContent?.goodsId)
+    const directGoodsId = meaningfulGoodsId(
+      row?.wakeupContent?.destId,
+      row?.wakeupContent?.spuId,
+      row?.goodsId,
+      row?.spuId,
+      row?.mid,
+      row?.sdpaGoodsId,
+      row?.wakeupContent?.goodsId,
+    )
     return directGoodsId ? [{ goodsId: directGoodsId }] : [{}]
   }
 
@@ -1306,12 +1572,15 @@
       'chargeType', 'uiStatus', 'uiStatusTitle', 'status', 'statusTitle', 'statistics',
       'goodsList', 'goodsInfos', 'goodsInfoList', 'productList', 'products', 'wakeupContent',
     ]
-    const goodsId = firstNonEmpty(
+    const goodsId = meaningfulGoodsId(
+      goods?.destId,
       goods?.spuId,
       goods?.goodsId,
       goods?.mid,
       goods?.productId,
       goods?.merchandiseNo,
+      row?.wakeupContent?.destId,
+      row?.wakeupContent?.spuId,
       row?.goodsId,
       row?.spuId,
       row?.mid,
@@ -1423,11 +1692,15 @@
   }
 
   function buildVipDirectProductInsightPayload(pageNo, pageSize, dateRange, rawParams = params) {
+    const mid = vipDirectMid(rawParams)
+    if (!mid) {
+      throw new Error('商品洞察广告明细需要 MID；默认请使用广告页商品明细，或传 --vipdirect-mid 后再使用 product_insight。')
+    }
     return {
       reportChannelTypeList: ['VSM'],
       startDate: dateRange.startMs,
       endDate: dateRange.endOfDayMs || dateRange.endMs,
-      mid: compact(rawParams.vipdirect_mid || rawParams.mid),
+      mid,
       columns: vipDirectColumnList(rawParams),
       searchTitle: compact(rawParams.vipdirect_search_title || rawParams.search_title),
       pageIndex: pageNo,
@@ -1486,6 +1759,9 @@
       return await collectVipDirectAdGoodsRows(rawParams)
     } catch (error) {
       if (parseBooleanFlag(rawParams.vipdirect_no_product_insight_fallback, false)) throw error
+      if (!vipDirectMid(rawParams)) {
+        throw new Error(`${VIPDIRECT_AD_LIST_URL} 读取失败：${error.message || error}；未传 MID，已跳过商品洞察降级，避免 /product/insight/ad/list 空 MID 返回 1001 掩盖广告商品明细错误。`)
+      }
       const fallback = await collectVipDirectProductInsightRows(rawParams)
       return {
         ...fallback,
@@ -1785,6 +2061,7 @@
       submittedTaskId,
       downloadStatus: compact(downloadTask?.status),
       downloaded: Boolean(downloadFile?.base64),
+      downloadReady: Boolean(downloadFile?.base64 || downloadFile?.downloadUrl),
     }
   }
 
@@ -1952,11 +2229,50 @@
     if (!model) throw new Error('下载中心任务未返回 downModel。')
     if (compact(model.downType) === 'FILE_LINK') {
       if (!hasText(model.fileLink)) throw new Error('下载中心 FILE_LINK 未返回 fileLink。')
-      const file = await getBlob(model.fileLink)
-      return {
-        ...file,
-        fileName: file.fileName || compact(task.fileName) || 'bct-product-effect.xlsx',
-        downType: 'FILE_LINK',
+      try {
+        const file = await getBlob(model.fileLink)
+        return {
+          ...file,
+          fileName: file.fileName || compact(task.fileName) || 'bct-product-effect.xlsx',
+          downType: 'FILE_LINK',
+        }
+      } catch (error) {
+        return deferredDownloadFile({
+          url: model.fileLink,
+          method: 'GET',
+          fileName: compact(task.fileName) || 'bct-product-effect.xlsx',
+          downType: 'FILE_LINK',
+          fetchError: error.message || String(error),
+        })
+      }
+    }
+    if (model?.param && model?.url && compact(model?.downType) === 'FILE_SECURITY') {
+      const payload = parseJsonObject(model.param)
+      const modelUrl = compact(model.url)
+      const securityUrl = BCT_FILE_SECURITY_DOWN_URL
+      try {
+        const file = await firstSuccessfulBlobDownload([
+          { label: `${securityUrl} JSON`, fetcher: () => postBlob(securityUrl, payload) },
+          modelUrl && modelUrl !== securityUrl
+            ? { label: `${modelUrl} JSON`, fetcher: () => postBlob(modelUrl, payload) }
+            : null,
+          { label: `${securityUrl} FormData`, fetcher: () => postFormBlob(securityUrl, payload) },
+          { label: `${securityUrl} query`, fetcher: () => getBlob(withQuery(securityUrl, payload)) },
+        ])
+        return {
+          ...file,
+          fileName: file.fileName || compact(task.fileName) || 'bct-product-effect.xlsx',
+          downType: 'FILE_SECURITY',
+        }
+      } catch (error) {
+        return deferredDownloadFile({
+          url: securityUrl,
+          method: 'POST',
+          payload,
+          fileName: compact(task.fileName) || 'bct-product-effect.xlsx',
+          downType: 'FILE_SECURITY',
+          fetchError: error.message || String(error),
+        })
       }
     }
     if (!hasText(model.url)) throw new Error('下载中心任务未返回下载 URL。')
@@ -1968,11 +2284,22 @@
         throw new Error('下载中心 downModel.param 不是合法 JSON。')
       }
     }
-    const file = await postBlob(model.url, payload)
-    return {
-      ...file,
-      fileName: file.fileName || compact(task.fileName) || 'bct-product-effect.xlsx',
-      downType: compact(model.downType || 'CUSTOMIZE'),
+    try {
+      const file = await postBlob(model.url, payload)
+      return {
+        ...file,
+        fileName: file.fileName || compact(task.fileName) || 'bct-product-effect.xlsx',
+        downType: compact(model.downType || 'CUSTOMIZE'),
+      }
+    } catch (error) {
+      return deferredDownloadFile({
+        url: model.url,
+        method: 'POST',
+        payload,
+        fileName: compact(task.fileName) || 'bct-product-effect.xlsx',
+        downType: compact(model.downType || 'CUSTOMIZE'),
+        fetchError: error.message || String(error),
+      })
     }
   }
 
@@ -2003,7 +2330,7 @@
     const statusLabel = status ? (BCT_DOWNLOAD_STATUS_LABELS[Number(status)] || status) : '已提交'
     const result = downloadFile?.base64
       ? '已下载商品效果文件'
-      : (downloadError ? '下载文件读取失败' : (Number(status) === 3 ? '下载中心生成失败' : '已提交下载中心'))
+      : (downloadFile?.downloadUrl ? '已获取下载链接待解析' : (downloadError ? '下载文件读取失败' : (Number(status) === 3 ? '下载中心生成失败' : '已提交下载中心')))
     const context = {
       sheet,
       sourceLabel,
@@ -2046,11 +2373,15 @@
         downloadError ? `下载/解析待处理：${downloadError}` : '',
       ].filter(Boolean).join('；'),
     }
-    if (downloadFile?.base64) {
-      output.__attachment_base64 = downloadFile.base64
+    if (downloadFile?.base64 || downloadFile?.downloadUrl) {
+      output.__attachment_base64 = downloadFile.base64 || ''
       output.__attachment_file_name = downloadFile.fileName || compact(downloadTask?.fileName) || 'bct-product-effect.xlsx'
       output.__attachment_content_type = downloadFile.contentType || ''
       output.__attachment_sheet_name = sheet
+      output.__attachment_download_url = downloadFile.downloadUrl || ''
+      output.__attachment_download_method = downloadFile.downloadMethod || ''
+      output.__attachment_download_payload = downloadFile.downloadPayload || ''
+      output.__attachment_download_error = downloadFile.fetchError || ''
       output.__attachment_context = safeJson(context)
     }
     return output
@@ -2227,16 +2558,16 @@
         const result = await collectCompassSalesRows(params)
         const modeLabel = result.mode === 'backend_export'
           ? '后台下载导出'
-          : (result.mode === 'table_fallback' ? '后台导出失败后降级页面表格接口' : '页面表格接口')
+          : (result.mode === 'backend_export_failed' ? '后台导出失败' : (result.mode === 'table_fallback' ? '后台导出失败后降级页面表格接口' : '页面表格接口'))
         const statusText = result.mode === 'backend_export'
-          ? `；导出任务 ${result.taskId || '未返回'}；${result.downloaded ? '已下载待 CLI 解析' : `下载状态 ${result.downloadStatus || '已提交/生成中'}`}`
-          : `；扫描 ${result.total} 行，实际输出 ${result.rows.length} 行，分页 ${result.pages} 页；页面表格接口可能受 10000 条上限影响`
+          ? `；导出任务 ${result.taskId || '未返回'}；${result.downloaded ? '已下载待 CLI 解析' : (result.downloadReady ? '已取得下载链接待 CLI 解析' : `下载状态 ${result.downloadStatus || '已提交/生成中'}`)}`
+          : (result.mode === 'backend_export_failed' ? '；未降级页面表格，避免 10000 条上限误导' : `；扫描 ${result.total} 行，实际输出 ${result.rows.length} 行，分页 ${result.pages} 页；页面表格接口可能受 10000 条上限影响`)
         const exportErrorText = result.exportError ? `；后台导出错误：${result.exportError}` : ''
         const rows = [
           summaryRow(
             '魔方罗盘销售明细',
             `商品明细日期 ${result.dateRange.startDt}-${result.dateRange.endDt}（${result.dateRange.source}）；模式 ${modeLabel}${statusText}${exportErrorText}；${compassBalaOnly(params) ? '只保留巴拉巴拉口径' : '未限制品牌'}`,
-            result.mode === 'backend_export' && !result.downloaded ? '已提交后台导出' : '完成',
+            result.mode === 'backend_export_failed' ? '部分失败' : (result.mode === 'backend_export' && !(result.downloaded || result.downloadReady) ? '已提交后台导出' : '完成'),
           ),
           ...result.rows,
         ]
@@ -2277,20 +2608,22 @@
         if (hasScope(scope, 'bct_gift')) {
           const result = await collectBctGroupRows('lifecycle', brand, params)
           stats.bct_gift_rows = result.rows.length
+          const readyText = result.downloaded ? '已下载待解析' : (result.downloadReady ? '已取得下载链接待 CLI 解析' : '请在下载中心查看生成进度')
           rows.push(summaryRow(
             '中台营销：礼金',
-            `品牌 ${brand.brandName || brand.brandSn}（${brand.matchedBy}）；活动过滤 ${result.activityFilter}；已提交右上角「批量导出商品效果」${result.exportConfig.label}（${result.exportConfig.configKey}）；下载状态 ${result.downloadStatus || '已提交'}；${result.downloaded ? '已下载待解析' : '请在下载中心查看生成进度'}`,
-            result.downloaded ? '完成' : '已提交下载中心',
+            `品牌 ${brand.brandName || brand.brandSn}（${brand.matchedBy}）；活动过滤 ${result.activityFilter}；已提交右上角「批量导出商品效果」${result.exportConfig.label}（${result.exportConfig.configKey}）；下载状态 ${result.downloadStatus || '已提交'}；${readyText}`,
+            (result.downloaded || result.downloadReady) ? '完成' : '已提交下载中心',
           ))
           rows.push(...result.rows)
         }
         if (hasScope(scope, 'bct_scene')) {
           const result = await collectBctGroupRows('scene', brand, params)
           stats.bct_scene_rows = result.rows.length
+          const readyText = result.downloaded ? '已下载待解析' : (result.downloadReady ? '已取得下载链接待 CLI 解析' : '请在下载中心查看生成进度')
           rows.push(summaryRow(
             '中台营销：购物车和跨品类券',
-            `品牌 ${brand.brandName || brand.brandSn}（${brand.matchedBy}）；活动过滤 ${result.activityFilter}；已提交右上角「批量导出商品效果」${result.exportConfig.label}（${result.exportConfig.configKey}）；下载状态 ${result.downloadStatus || '已提交'}；${result.downloaded ? '已下载待解析' : '请在下载中心查看生成进度'}`,
-            result.downloaded ? '完成' : '已提交下载中心',
+            `品牌 ${brand.brandName || brand.brandSn}（${brand.matchedBy}）；活动过滤 ${result.activityFilter}；已提交右上角「批量导出商品效果」${result.exportConfig.label}（${result.exportConfig.configKey}）；下载状态 ${result.downloadStatus || '已提交'}；${readyText}`,
+            (result.downloaded || result.downloadReady) ? '完成' : '已提交下载中心',
           ))
           rows.push(...result.rows)
         }

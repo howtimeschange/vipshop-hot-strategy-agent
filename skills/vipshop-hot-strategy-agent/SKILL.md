@@ -102,9 +102,11 @@ When a report column or page-owned API field is absent, render it as `未返回`
 
 BCT 礼金、购物车/跨品类券采集应使用策略效果页右上角「批量导出商品效果」路径（下载中心配置 `toolTaskMidSummary` / `toolTaskMidDaily`），不要把 `/bcc/toolbox_task/list` 的活动效果列表当作商品明细。
 
-魔方罗盘商品明细默认走后台下载导出任务，避开页面表格接口 `10000` 条上限；解析附件时只保留巴拉巴拉口径。只有排查接口时才使用 `--compass-table-api`，并在回复里说明这可能受 10000 条上限影响。
+魔方罗盘商品明细默认走页面同款后台下载导出任务（`/product/detail/asyncExportGoodsList` -> `/report/asyncdownload/queryTaskList` -> `/report/asyncdownload/getOutputFile`），避开页面表格接口 `10000` 条上限；解析附件时只保留巴拉巴拉口径。后台导出失败时不要默认降级写入页面表格；只有排查接口时才使用 `--compass-table-api` 或显式 `--compass-table-fallback`，并在回复里说明这可能受 10000 条上限影响。
 
-唯直达默认使用 `推广 > 站内广告 > 唯直达 > 广告` 的广告商品明细口径，输出商品ID/MID、广告名称和广告指标；不要把旧 `ck/report/table` 汇总数据当作用户要的商品广告明细。若临时使用 `--vipdirect-summary-api` 或商品洞察降级，应在回复里明确口径。
+唯直达默认使用 `推广 > 站内广告 > 唯直达 > 广告`（`#/promotion/insite/search/advertisement`）的广告商品明细口径，输出商品ID/MID、广告名称和广告指标；不要把旧 `ck/report/table` 汇总数据当作用户要的商品广告明细。商品洞察口径必须提供 `--vipdirect-mid`；不要用空 MID 降级到 `/product/insight/ad/list`，否则会用 `1001` 无效参数掩盖广告页商品明细接口问题。若临时使用 `--vipdirect-summary-api` 或商品洞察降级，应在回复里明确口径。
+
+如果 BCT 或魔方下载中心任务已经返回下载链接，CLI 必须自动下载并解析该文件；不要把“请去下载中心手动下载”作为完成状态。
 
 ## Safety Reference
 

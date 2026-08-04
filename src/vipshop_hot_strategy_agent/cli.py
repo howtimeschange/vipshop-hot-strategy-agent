@@ -20,6 +20,7 @@ def add_collect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--compass-end-date", default="")
     parser.add_argument("--compass-brand-store-sn", default="", help="魔方罗盘 brandStoreSn；默认 all，并在导出解析时只保留品牌关键词。")
     parser.add_argument("--compass-table-api", action="store_true", help="魔方改用页面商品表格接口；该接口可能只返回前 10000 条。")
+    parser.add_argument("--compass-table-fallback", action="store_true", help="魔方后台导出失败后允许降级页面表格接口；默认不降级，避免 10000 条上限误导。")
     parser.add_argument("--compass-export-required", action="store_true", help="魔方后台导出失败时直接失败，不降级到页面表格接口。")
     parser.add_argument("--compass-export-wait-seconds", type=int, default=180, help="等待魔方后台导出生成的秒数；设为 0 只提交任务。")
     parser.add_argument("--compass-export-poll-seconds", type=int, default=5, help="轮询魔方后台导出任务的间隔秒数。")
@@ -34,6 +35,7 @@ def add_collect_args(parser: argparse.ArgumentParser) -> None:
         default="ad_list",
         help="唯直达明细来源：ad_list=广告页按广告展开商品，product_insight=商品洞察 MID x 广告明细。",
     )
+    parser.add_argument("--vipdirect-mid", default="", help="商品洞察降级/调试使用的 MID；默认广告页商品明细不需要。")
     parser.add_argument("--vipdirect-no-product-insight-fallback", action="store_true", help="广告页接口失败时不降级商品洞察接口。")
     parser.add_argument("--tmax-start-date", default="")
     parser.add_argument("--tmax-end-date", default="")

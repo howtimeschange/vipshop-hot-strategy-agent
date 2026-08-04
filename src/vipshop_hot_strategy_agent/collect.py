@@ -6,6 +6,9 @@ import csv
 import importlib.util
 import json
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import Counter
 from dataclasses import replace
 from io import BytesIO, StringIO
@@ -70,6 +73,7 @@ def build_params(args: Any) -> dict[str, Any]:
         "compass_end_date",
         "compass_brand_store_sn",
         "compass_table_api",
+        "compass_table_fallback",
         "compass_export_required",
         "compass_export_wait_seconds",
         "compass_export_poll_seconds",
@@ -79,6 +83,7 @@ def build_params(args: Any) -> dict[str, Any]:
         "vipdirect_end_date",
         "vipdirect_summary_api",
         "vipdirect_detail_source",
+        "vipdirect_mid",
         "vipdirect_no_product_insight_fallback",
         "tmax_start_date",
         "tmax_end_date",
@@ -158,7 +163,11 @@ HEADER_KEYWORDS = ("商品", "货号", "款号", "活动", "销售", "订单", "
 
 
 def _visible_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in row.items() if not str(key).startswith("__")}
+    return {
+        key: value
+        for key, value in row.items()
+        if key == "__sheet_name" or not str(key).startswith("__")
+    }
 
 
 def _is_empty(value: Any) -> bool:
@@ -196,6 +205,8 @@ def _header_score(values: list[Any]) -> int:
 
 
 def _worksheet_rows(ws: Any) -> list[dict[str, Any]]:
+    if hasattr(ws, "reset_dimensions"):
+        ws.reset_dimensions()
     raw_rows = [list(row) for row in ws.iter_rows(values_only=True)]
     if not raw_rows:
         return []
@@ -239,6 +250,30 @@ def _safe_file_name(name: str, fallback: str) -> str:
     return cleaned[:160] or fallback
 
 
+def _filename_from_content_disposition(value: str) -> str:
+    if not value:
+        return ""
+    star = "filename*=UTF-8''"
+    for part in value.split(";"):
+        text = part.strip()
+        if text.lower().startswith(star.lower()):
+            return urllib.parse.unquote(text[len(star):].strip().strip('"'))
+        if text.lower().startswith("filename="):
+            return text.split("=", 1)[1].strip().strip('"')
+    return ""
+
+
+def _suffix_for_attachment(data: bytes, content_type: str) -> str:
+    lowered = content_type.lower()
+    if "csv" in lowered:
+        return ".csv"
+    if "spreadsheetml" in lowered or "excel" in lowered:
+        return ".xlsx"
+    if data.startswith(b"PK\x03\x04"):
+        return ".xlsx"
+    return ""
+
+
 def _decode_attachment_context(row: Mapping[str, Any]) -> dict[str, Any]:
     raw = row.get("__attachment_context") or "{}"
     if isinstance(raw, Mapping):
@@ -248,6 +283,92 @@ def _decode_attachment_context(row: Mapping[str, Any]) -> dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
     except json.JSONDecodeError:
         return {}
+
+
+def _request_attachment(
+    url: str,
+    *,
+    method: str = "GET",
+    data: bytes | None = None,
+    content_type: str = "",
+) -> tuple[bytes, str, str]:
+    headers = {"User-Agent": "vipshop-hot-strategy-agent/0.1"}
+    if content_type:
+        headers["Content-Type"] = content_type
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(request, timeout=120) as response:
+        body = response.read()
+        response_type = response.headers.get("content-type", "")
+        file_name = _filename_from_content_disposition(response.headers.get("content-disposition", ""))
+        return body, file_name, response_type
+
+
+def _looks_like_download(data: bytes, content_type: str) -> bool:
+    lowered = content_type.lower()
+    if data.startswith(b"PK\x03\x04") or data.startswith(b"\xef\xbb\xbf"):
+        return True
+    if any(marker in lowered for marker in ["spreadsheet", "excel", "csv", "octet-stream", "force-download"]):
+        return True
+    stripped = data.lstrip()[:20].lower()
+    return not any(marker in lowered for marker in ["application/json", "text/html"]) and not stripped.startswith((b"{", b"[", b"<"))
+
+
+def _parse_download_payload(payload_text: str) -> Any:
+    if not payload_text:
+        return {}
+    try:
+        return json.loads(payload_text)
+    except json.JSONDecodeError:
+        return payload_text
+
+
+def _payload_query(payload: Any) -> str:
+    if isinstance(payload, Mapping):
+        return urllib.parse.urlencode({str(key): value for key, value in payload.items()}, doseq=True)
+    return str(payload or "")
+
+
+def _download_attachment_bytes(row: Mapping[str, Any]) -> tuple[bytes, str, str]:
+    url = str(row.get("__attachment_download_url") or "").strip()
+    if not url:
+        return b"", "", ""
+    method = str(row.get("__attachment_download_method") or "GET").strip().upper() or "GET"
+    payload_text = str(row.get("__attachment_download_payload") or "").strip()
+    if method != "POST":
+        try:
+            return _request_attachment(url)
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"下载链接读取失败：{error}") from error
+
+    payload = _parse_download_payload(payload_text)
+    attempts: list[tuple[str, str, bytes | None, str]] = []
+    attempts.append(("JSON", url, (payload_text or "{}").encode("utf-8"), "application/json;charset=UTF-8"))
+    query_text = _payload_query(payload)
+    if query_text:
+        attempts.append(("FormData", url, query_text.encode("utf-8"), "application/x-www-form-urlencoded;charset=UTF-8"))
+        if isinstance(payload, Mapping) and "reqData" not in payload:
+            attempts.append((
+                "reqData",
+                url,
+                urllib.parse.urlencode({"reqData": json.dumps(payload, ensure_ascii=False)}).encode("utf-8"),
+                "application/x-www-form-urlencoded;charset=UTF-8",
+            ))
+        attempts.append(("query", f"{url}{'&' if '?' in url else '?'}{query_text}", None, ""))
+
+    errors: list[str] = []
+    fallback: tuple[bytes, str, str] | None = None
+    for label, attempt_url, data, content_type in attempts:
+        try:
+            result = _request_attachment(attempt_url, method="POST" if data is not None else "GET", data=data, content_type=content_type)
+            if _looks_like_download(result[0], result[2]):
+                return result
+            fallback = result
+            errors.append(f"{label}: 响应不是文件（{result[2] or 'unknown content-type'}）")
+        except urllib.error.URLError as error:
+            errors.append(f"{label}: {error}")
+    if fallback:
+        return fallback
+    raise RuntimeError(f"下载链接读取失败：{'；'.join(errors)}")
 
 
 def _context_flag(context: Mapping[str, Any], key: str, default: bool = False) -> bool:
@@ -264,28 +385,16 @@ def _download_row_matches_context(row: Mapping[str, Any], context: Mapping[str, 
     if sheet != "魔方罗盘销售明细" or not _context_flag(context, "balaOnly", False):
         return True
     keyword = str(context.get("brandKeyword") or context.get("brandName") or "巴拉巴拉").strip()
-    preferred_haystack = " ".join(
+    context_brand = str(context.get("brandName") or "").strip()
+    brand_values = [
         str(value).strip()
-        for key in [
-            "品牌店铺",
-            "品牌",
-            "brandStoreName",
-            "brandName",
-            "brandStoreSn",
-            "品牌SN",
-        ]
+        for key in ["品牌店铺", "品牌", "brandStoreName", "brandName", "brand_store_name"]
         if not _is_empty(value := row.get(key))
-    )
-    haystack = preferred_haystack or " ".join(
-        str(value).strip()
-        for key in [
-            "品牌名称",
-            "品牌编码",
-            "商品名称",
-            "goodsName",
-        ]
-        if not _is_empty(value := row.get(key))
-    )
+    ]
+    brand_name = str(row.get("品牌名称") or "").strip()
+    if brand_name and (not context_brand or brand_name != context_brand):
+        brand_values.append(brand_name)
+    haystack = " ".join(brand_values)
     if not haystack:
         return True
     return (keyword and keyword in haystack) or ("巴拉巴拉" in haystack) or ("Balabala".lower() in haystack.lower())
@@ -335,10 +444,22 @@ def _normalize_download_row(
 
 def _parse_download_attachment(row: Mapping[str, Any], out_dir: Path) -> list[dict[str, Any]]:
     encoded = str(row.get("__attachment_base64") or "")
-    if not encoded:
+    downloaded_name = ""
+    downloaded_type = ""
+    if encoded:
+        data = base64.b64decode(encoded)
+    else:
+        data, downloaded_name, downloaded_type = _download_attachment_bytes(row)
+    if not data:
         return []
-    data = base64.b64decode(encoded)
-    file_name = _safe_file_name(str(row.get("__attachment_file_name") or "bct-product-effect.xlsx"), "bct-product-effect.xlsx")
+    provided_name = str(row.get("__attachment_file_name") or "").strip()
+    file_name = _safe_file_name(provided_name or downloaded_name or "bct-product-effect.xlsx", "bct-product-effect.xlsx")
+    effective_content_type = str(row.get("__attachment_content_type") or downloaded_type or "")
+    if not Path(file_name).suffix:
+        file_name = f"{file_name}{_suffix_for_attachment(data, effective_content_type) or '.xlsx'}"
+    if downloaded_type and _is_empty(row.get("__attachment_content_type")):
+        row = dict(row)
+        row["__attachment_content_type"] = downloaded_type
     saved_path = out_dir / file_name
     counter = 1
     while saved_path.exists():
@@ -346,7 +467,7 @@ def _parse_download_attachment(row: Mapping[str, Any], out_dir: Path) -> list[di
         counter += 1
     saved_path.write_bytes(data)
     context = _decode_attachment_context(row)
-    if file_name.lower().endswith(".csv"):
+    if file_name.lower().endswith(".csv") or "csv" in str(row.get("__attachment_content_type") or "").lower():
         output: list[dict[str, Any]] = []
         for item in _csv_rows(data):
             normalized = _normalize_download_row(item, context=context, file_name=file_name, saved_path=saved_path, source_sheet="CSV")
@@ -373,7 +494,7 @@ def _expand_download_attachments(rows: list[Mapping[str, Any]], out_dir: Path) -
     expanded: list[dict[str, Any]] = []
     for row in rows:
         visible = _visible_row(row)
-        if not row.get("__attachment_base64"):
+        if not row.get("__attachment_base64") and not row.get("__attachment_download_url"):
             expanded.append(dict(row))
             continue
         try:

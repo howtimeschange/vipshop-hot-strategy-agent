@@ -5,7 +5,10 @@ import tempfile
 import unittest
 import base64
 import json
+import threading
+import zipfile
 from contextlib import redirect_stdout
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO, StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -291,7 +294,7 @@ class AnalysisTest(unittest.TestCase):
                     "balaOnly": True,
                     "configKey": "compass_product_detail_export",
                     "taskId": "C1",
-                    "sourceApi": "/pc/mms/v1/item/export -> /pc/mms/v1/item/export/task/list",
+                    "sourceApi": "/product/detail/asyncExportGoodsList -> /report/asyncdownload/queryTaskList -> /report/asyncdownload/getOutputFile",
                 }, ensure_ascii=False),
             }
         ]
@@ -307,7 +310,7 @@ class AnalysisTest(unittest.TestCase):
             self.assertEqual(parsed["品牌店铺"], "巴拉巴拉Balabala")
             self.assertEqual(parsed["曝光次数"], 5000)
             self.assertEqual(parsed["导出任务ID"], "C1")
-            self.assertIn("/pc/mms/v1/item/export", parsed["数据来源接口"])
+            self.assertIn("/product/detail/asyncExportGoodsList", parsed["数据来源接口"])
 
             workbook = export_workbook(expanded, tmp, filename="compass-expanded.xlsx")
             sheet = load_workbook(workbook)["魔方罗盘销售明细"]
@@ -317,6 +320,212 @@ class AnalysisTest(unittest.TestCase):
             mids = [row[headers.index("商品ID")].value for row in sheet.iter_rows(min_row=2)]
             self.assertIn("20001", mids)
             self.assertNotIn("30001", mids)
+
+    def test_compass_backend_export_keeps_rows_when_brand_name_and_numeric_sn_are_separate(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "1"
+        ws.append(["商品ID", "日期", "商品名称", "货号", "款号", "品牌SN", "品牌名称", "商详UV", "销售额"])
+        ws.append(["6921826220522711749", "2026-08-03", "儿童内裤", "20992617011600384", "209925170121", "10004119", "巴拉巴拉Balabala", 839, 6721.33])
+        buffer = BytesIO()
+        wb.save(buffer)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        rows = [
+            {
+                "__sheet_name": "魔方罗盘销售明细",
+                "报表来源": "魔方罗盘销售明细",
+                "执行结果": "已下载后台导出文件",
+                "__attachment_base64": encoded,
+                "__attachment_file_name": "compass-real-like.xlsx",
+                "__attachment_context": json.dumps({
+                    "sheet": "魔方罗盘销售明细",
+                    "sourceLabel": "魔方罗盘销售明细",
+                    "groupLabel": "商品明细",
+                    "brandName": "巴拉巴拉",
+                    "brandKeyword": "巴拉巴拉",
+                    "balaOnly": True,
+                    "configKey": "compass_product_detail_export",
+                    "taskId": "C2",
+                    "sourceApi": "/product/detail/asyncExportGoodsList -> /report/asyncdownload/getOutputFile",
+                }, ensure_ascii=False),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            expanded = _expand_download_attachments(rows, Path(tmp))
+            self.assertEqual(len(expanded), 2)
+            parsed = expanded[1]
+            self.assertEqual(parsed["商品ID"], "6921826220522711749")
+            self.assertEqual(parsed["品牌名称"], "巴拉巴拉Balabala")
+            self.assertEqual(parsed["品牌编码"], "10004119")
+            self.assertEqual(parsed["销售额"], 6721.33)
+
+    def test_download_center_link_is_downloaded_and_expanded_by_cli_parser(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "商品效果"
+        ws.append(["商品ID", "货号", "商品名称", "销售额"])
+        ws.append(["10009", "BALA-LINK", "链接下载商品", 4321])
+        buffer = BytesIO()
+        wb.save(buffer)
+        payload = buffer.getvalue()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+                self.send_response(200)
+                self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                self.send_header("Content-Disposition", "attachment; filename*=UTF-8''download-center.xlsx")
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib signature
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        rows = [
+            {
+                "__sheet_name": "中台礼金",
+                "报表来源": "中台营销：礼金",
+                "执行结果": "已获取下载链接待解析",
+                "__attachment_file_name": "策略中心商品效果汇总数据-202608041623",
+                "__attachment_download_url": f"http://127.0.0.1:{server.server_port}/download",
+                "__attachment_download_method": "GET",
+                "__attachment_context": json.dumps({
+                    "sheet": "中台礼金",
+                    "sourceLabel": "中台营销：礼金",
+                    "groupLabel": "用户生命周期运营",
+                    "brandSn": "BALA",
+                    "brandName": "巴拉巴拉",
+                    "configKey": "toolTaskMidSummary",
+                    "taskId": "D2",
+                    "exportLabel": "商品汇总效果数据",
+                }, ensure_ascii=False),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            expanded = _expand_download_attachments(rows, Path(tmp))
+            self.assertEqual(len(expanded), 2)
+            self.assertEqual(expanded[0]["执行结果"], "已解析商品效果文件")
+            parsed = expanded[1]
+            self.assertEqual(parsed["商品ID"], "10009")
+            self.assertEqual(parsed["货号"], "BALA-LINK")
+            self.assertEqual(parsed["销售额"], 4321)
+            self.assertTrue((Path(tmp) / "策略中心商品效果汇总数据-202608041623.xlsx").is_file())
+
+    def test_post_download_center_link_tries_form_after_json_response(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "商品效果"
+        ws.append(["商品ID", "货号", "商品名称", "销售额"])
+        ws.append(["10010", "BALA-POST", "POST下载商品", 5432])
+        buffer = BytesIO()
+        wb.save(buffer)
+        payload = buffer.getvalue()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - stdlib callback name
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if self.headers.get("Content-Type", "").startswith("application/json"):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"code":1,"msg":"json is not file"}')
+                    return
+                if b"fileKey=abc" in body:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Disposition", "attachment; filename=post-download.xlsx")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                self.send_response(400)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib signature
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        rows = [
+            {
+                "__sheet_name": "中台购物车跨品类券",
+                "报表来源": "中台营销：购物车和跨品类券",
+                "执行结果": "已获取下载链接待解析",
+                "__attachment_file_name": "购物车POST下载",
+                "__attachment_download_url": f"http://127.0.0.1:{server.server_port}/download",
+                "__attachment_download_method": "POST",
+                "__attachment_download_payload": json.dumps({"fileKey": "abc"}),
+                "__attachment_context": json.dumps({
+                    "sheet": "中台购物车跨品类券",
+                    "sourceLabel": "中台营销：购物车和跨品类券",
+                    "groupLabel": "场景运营",
+                    "brandSn": "BALA",
+                    "brandName": "巴拉巴拉",
+                    "configKey": "toolTaskMidSummary",
+                    "taskId": "D4",
+                    "exportLabel": "商品汇总效果数据",
+                }, ensure_ascii=False),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            expanded = _expand_download_attachments(rows, Path(tmp))
+            self.assertEqual(len(expanded), 2)
+            parsed = expanded[1]
+            self.assertEqual(parsed["__sheet_name"], "中台购物车跨品类券")
+            self.assertEqual(parsed["商品ID"], "10010")
+            self.assertEqual(parsed["货号"], "BALA-POST")
+            self.assertEqual(parsed["销售额"], 5432)
+            self.assertTrue((Path(tmp) / "购物车POST下载.xlsx").is_file())
+
+    def test_bad_xlsx_dimension_download_still_expands_goods_rows(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "补贴金"
+        ws.append(["活动ID", "活动名称", "商品MID", "商品名称", "使用销售额", "ROI"])
+        ws.append(["53494828", "礼金联合提报", "6921609160760370565", "宝宝毛衫", "144.900000", "28.980000"])
+        buffer = BytesIO()
+        wb.save(buffer)
+        source = BytesIO(buffer.getvalue())
+        patched = BytesIO()
+        with zipfile.ZipFile(source) as zin, zipfile.ZipFile(patched, "w") as zout:
+            for info in zin.infolist():
+                data = zin.read(info.filename)
+                if info.filename == "xl/worksheets/sheet1.xml":
+                    data = data.replace(b'<dimension ref="A1:F2"/>', b'<dimension ref="A1"/>')
+                zout.writestr(info, data)
+        encoded = base64.b64encode(patched.getvalue()).decode("ascii")
+        rows = [
+            {
+                "__sheet_name": "中台礼金",
+                "报表来源": "中台营销：礼金",
+                "执行结果": "已获取下载链接待解析",
+                "__attachment_base64": encoded,
+                "__attachment_file_name": "策略中心商品效果汇总数据-维度异常.xlsx",
+                "__attachment_context": json.dumps({
+                    "sheet": "中台礼金",
+                    "sourceLabel": "中台营销：礼金",
+                    "groupLabel": "用户生命周期运营",
+                    "brandName": "巴拉巴拉",
+                    "configKey": "toolTaskMidSummary",
+                    "taskId": "D3",
+                    "exportLabel": "商品汇总效果数据",
+                }, ensure_ascii=False),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            expanded = _expand_download_attachments(rows, Path(tmp))
+            self.assertEqual(len(expanded), 2)
+            self.assertEqual(expanded[0]["__sheet_name"], "中台礼金")
+            parsed = expanded[1]
+            self.assertEqual(parsed["__sheet_name"], "中台礼金")
+            self.assertEqual(parsed["商品ID"], "6921609160760370565")
+            self.assertEqual(parsed["销售额"], "144.900000")
 
     def test_vipdirect_workbook_headers_include_goods_ad_detail_fields(self) -> None:
         rows = [
@@ -374,7 +583,9 @@ class AnalysisTest(unittest.TestCase):
         self.assertIn("--bct-gift-activity-start", stdout.getvalue())
         self.assertIn("--bct-scene-activity-end", stdout.getvalue())
         self.assertIn("--compass-table-api", stdout.getvalue())
+        self.assertIn("--compass-table-fallback", stdout.getvalue())
         self.assertIn("--vipdirect-summary-api", stdout.getvalue())
+        self.assertIn("--vipdirect-mid", stdout.getvalue())
 
     def test_collect_params_keep_independent_report_ranges(self) -> None:
         args = SimpleNamespace(
@@ -395,14 +606,18 @@ class AnalysisTest(unittest.TestCase):
             bct_scene_activity_start="2026-08-01",
             bct_scene_activity_end="2026-08-03",
             compass_export_wait_seconds=0,
+            compass_table_fallback=True,
             vipdirect_detail_source="ad_list",
+            vipdirect_mid="20001",
         )
         params = build_params(args)
 
         self.assertEqual(params["compass_start_date"], "2026-08-02")
         self.assertEqual(params["compass_export_wait_seconds"], 0)
+        self.assertTrue(params["compass_table_fallback"])
         self.assertEqual(params["vipdirect_end_date"], "2026-08-02")
         self.assertEqual(params["vipdirect_detail_source"], "ad_list")
+        self.assertEqual(params["vipdirect_mid"], "20001")
         self.assertEqual(params["tmax_start_date"], "2026-07-30")
         self.assertEqual(params["bct_gift_activity_start"], "2026-07-29")
         self.assertEqual(params["bct_scene_activity_end"], "2026-08-03")
