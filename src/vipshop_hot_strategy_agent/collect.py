@@ -17,6 +17,7 @@ from typing import Any, Callable, Mapping
 
 from openpyxl import load_workbook
 
+from .cdp_browser import DEFAULT_CDP_URL, default_entry_url, ensure_cdp_browser
 from .excel_export import export_workbook
 from .paths import paths
 
@@ -25,11 +26,7 @@ DEFAULT_SCOPE = ["compass_sales_detail", "vipdirect_ads", "tmax_goods", "bct_gif
 
 
 def runtime_candidates() -> list[Path]:
-    return [
-        Path("/Users/xingyicheng/.codex/plugins/cache/personal/crawshrimp-skill/0.1.0+codex.20260622090512/skills/crawshrimp-skill/scripts"),
-        Path("/Users/xingyicheng/Documents/crawshrimp/skills/crawshrimp-skill/scripts"),
-        paths().root / "vendor" / "crawshrimp-skill" / "scripts",
-    ]
+    return [paths().root / "vendor" / "crawshrimp-skill" / "scripts"]
 
 
 def locate_runtime_scripts(runtime_root: str | Path | None = None) -> Path:
@@ -52,6 +49,11 @@ def _load_module(name: str, path: Path):
 
 
 def load_runtime(runtime_root: str | Path | None = None):
+    if runtime_root is None:
+        from .crawshrimp_runtime import browser_executor, phase_runner
+
+        return browser_executor, phase_runner
+
     scripts = locate_runtime_scripts(runtime_root)
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
@@ -570,14 +572,39 @@ def _expand_download_attachments(rows: list[Mapping[str, Any]], out_dir: Path) -
 
 async def collect_reports_async(
     *,
-    cdp_url: str = "http://127.0.0.1:9222",
+    cdp_url: str = DEFAULT_CDP_URL,
     tab_id: str = "",
     url_prefix: str = "",
     runtime_root: str | Path | None = None,
     params: dict[str, Any] | None = None,
     out_dir: str | Path = "~/Downloads",
+    auto_cdp: bool = True,
+    cdp_entry_url: str = "",
+    chrome_path: str = "",
+    chrome_profile_dir: str | Path = "",
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    params = params or {}
+    session = ensure_cdp_browser(
+        cdp_url=cdp_url,
+        entry_url=cdp_entry_url or default_entry_url(params),
+        tab_id=tab_id,
+        url_prefix=url_prefix,
+        auto_launch=auto_cdp,
+        chrome_path=chrome_path,
+        profile_dir=chrome_profile_dir,
+    )
+    if progress:
+        progress({
+            "kind": "cdp_ready",
+            "cdp_url": session.cdp_url,
+            "tab_id": session.tab_id,
+            "entry_url": session.entry_url,
+            "launched": session.launched,
+        })
+    tab_id = session.tab_id or tab_id
+    url_prefix = "" if tab_id else url_prefix
+
     browser_executor, phase_runner = load_runtime(runtime_root)
 
     class LongEvalBackend(browser_executor.ChromeCDPBackend):
@@ -595,7 +622,7 @@ async def collect_reports_async(
         if progress:
             progress(event)
 
-    result = await runner.run_script(script, params=params or {}, control_hook=hook)
+    result = await runner.run_script(script, params=params, control_hook=hook)
     rows = result.data
     if not rows:
         raise RuntimeError("collection returned no rows")
@@ -609,6 +636,12 @@ async def collect_reports_async(
         "rows": len(rows),
         "sheet_counts": dict(counts),
         "shared": result.shared,
+        "cdp": {
+            "url": session.cdp_url,
+            "tab_id": session.tab_id,
+            "entry_url": session.entry_url,
+            "launched": session.launched,
+        },
     }
 
 

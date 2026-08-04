@@ -2,7 +2,7 @@
 
 这是一个独立的 CLI + skill 项目，用来把唯品会爆款策略复盘中常用的 5 份报表采集、导出、分析和策略总结固化成可重复执行的本地工具。
 
-项目默认走只读链路：通过用户已经登录的 Chrome CDP 9222 会话复用页面上下文，调用页面自己的报表接口读取数据，不读取或保存 cookie、token、localStorage、sessionStorage，也不修改广告、礼金、优惠券、预算、出价或商品配置。
+项目默认走只读链路：CLI 会优先复用用户已经登录的 Chrome CDP 9222 会话；如果 `127.0.0.1:9222` 不可用，会自动打开一个本项目专用 profile 的 9222 Chrome。采集仍然调用页面自己的报表接口读取数据，不读取或保存 cookie、token、localStorage、sessionStorage，也不修改广告、礼金、优惠券、预算、出价或商品配置。
 
 ## 核心能力
 
@@ -30,6 +30,8 @@ python3 -m venv .venv
 python3 -m pip install -e .
 ```
 
+依赖声明在本项目内维护：`pyproject.toml` / `requirements.txt` 包含 Excel、YAML 和 Chrome CDP WebSocket 运行依赖；抓虾兼容运行时已 vendored 到 `src/vipshop_hot_strategy_agent/crawshrimp_runtime/`，默认不再依赖外部 plugin 或 `/Documents/crawshrimp` 路径。
+
 如果只想直接用源码运行，也可以：
 
 ```bash
@@ -46,7 +48,7 @@ vipshop-hot-strategy analyze \
   --out-dir /Users/xingyicheng/Downloads
 ```
 
-在已登录的 9222 Chrome 中重新采集并分析：
+重新采集并分析。默认会自动准备 9222 Chrome/CDP：能连上就复用现有会话，连不上就打开一个本项目专用 profile 的 Chrome。首次使用自动打开的 Chrome 时，需要在该浏览器里登录一次唯品会后台：
 
 ```bash
 vipshop-hot-strategy run \
@@ -68,7 +70,21 @@ vipshop-hot-strategy run \
   --out-dir /Users/xingyicheng/Downloads
 ```
 
-如果 9222 Chrome 同时打开了多个唯品会相关标签页，请传入 `--tab-id` 或 `--url-prefix`，显式选择要复用的页面。
+如果想指定已有标签页，可以传入 `--tab-id` 或 `--url-prefix`。如果想回到旧式严格模式，不自动打开 Chrome、不自动新建目标标签页，可以加 `--no-auto-cdp`：
+
+```bash
+vipshop-hot-strategy collect \
+  --no-auto-cdp \
+  --cdp-url http://127.0.0.1:9222 \
+  --url-prefix https://compass.vip.com \
+  --out-dir /Users/xingyicheng/Downloads
+```
+
+调试自动启动时可传：
+
+- `--cdp-entry-url`：自动创建目标标签页时打开的 URL，默认按报表范围选择魔方/中台/唯直达/T-max 页面。
+- `--chrome-path`：指定 Chrome/Chromium 可执行文件。
+- `--chrome-profile-dir`：指定自动 CDP Chrome 的用户数据目录，默认 `~/.vipshop-hot-strategy-agent/chrome-cdp-profile`。
 
 生成需求理解摘要：
 
@@ -119,7 +135,9 @@ examples/                            CLI 参数示例
 references/                          指标规则和安全边界
 scripts/quick_validate.py            项目形态检查
 skills/vipshop-hot-strategy-agent/   可安装或引用的 agent skill
-src/vipshop_hot_strategy_agent/      CLI、采集、导出、分析代码
+src/vipshop_hot_strategy_agent/      CLI、CDP harness、采集、导出、分析代码
+src/vipshop_hot_strategy_agent/crawshrimp_runtime/
+                                     本项目 vendored 抓虾兼容运行时
 tests/                               离线单元测试
 ```
 
@@ -131,7 +149,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/quick_validate.py
 ```
 
-真实采集验证需要本机已有可用的 Chrome CDP 9222 登录态。采集链路仍然只读，输出到本地目录。
+真实采集验证会优先使用本机已有可用的 Chrome CDP 9222 登录态；如果没有，CLI 会打开一个 9222 Chrome。采集链路仍然只读，输出到本地目录。
 
 ## 当前边界
 

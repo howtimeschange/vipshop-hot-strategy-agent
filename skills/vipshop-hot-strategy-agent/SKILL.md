@@ -11,9 +11,10 @@ Use this skill when the user asks for 唯品会爆款策略追踪、5 份报表�
 
 - Work from the independent project root: `/Users/xingyicheng/Documents/vipshop-hot-strategy-agent`.
 - Use the local CLI first: `vipshop-hot-strategy`.
-- Browser collection is read-only and must use the user's existing `http://127.0.0.1:9222` Chrome/CDP session.
+- Browser collection is read-only. The CLI uses auto CDP by default: it first reuses the user's existing `http://127.0.0.1:9222` Chrome/CDP session, and if that endpoint is missing it launches a local 9222 Chrome with a project-owned profile.
+- The Crawshrimp-compatible runtime is vendored in `src/vipshop_hot_strategy_agent/crawshrimp_runtime`; do not depend on external Crawshrimp plugin or adapter paths for this standalone project.
 - Prefer the page-owned API path already encoded in `assets/hot-strategy-tracking-report.js`.
-- When multiple Chrome tabs are open, pass `--tab-id` or `--url-prefix` so the CLI selects the intended tab explicitly.
+- When multiple Chrome tabs are open, the CLI can create a fresh target tab automatically. Pass `--tab-id` or `--url-prefix` when the user wants a specific existing tab.
 - Do not extract cookies, tokens, localStorage, sessionStorage, QR codes, payment data, or personal sensitive data.
 - Do not submit, save, publish, delete, change budgets, change bids, or modify marketing configuration unless the user gives explicit authorization for that exact side effect.
 
@@ -31,6 +32,13 @@ Collect the 5 reports into Excel:
 ```bash
 cd /Users/xingyicheng/Documents/vipshop-hot-strategy-agent
 python3 -m vipshop_hot_strategy_agent.cli collect --cdp-url http://127.0.0.1:9222 --out-dir /Users/xingyicheng/Downloads
+```
+
+To force the old strict mode that never starts Chrome or creates a target tab:
+
+```bash
+cd /Users/xingyicheng/Documents/vipshop-hot-strategy-agent
+python3 -m vipshop_hot_strategy_agent.cli collect --no-auto-cdp --cdp-url http://127.0.0.1:9222 --url-prefix https://compass.vip.com --out-dir /Users/xingyicheng/Downloads
 ```
 
 Collect and analyze in one pass:

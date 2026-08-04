@@ -14,6 +14,12 @@ REQUIRED = [
     "docs/requirements-extracted.txt",
     "src/vipshop_hot_strategy_agent/cli.py",
     "src/vipshop_hot_strategy_agent/collect.py",
+    "src/vipshop_hot_strategy_agent/cdp_browser.py",
+    "src/vipshop_hot_strategy_agent/crawshrimp_runtime/__init__.py",
+    "src/vipshop_hot_strategy_agent/crawshrimp_runtime/browser_executor.py",
+    "src/vipshop_hot_strategy_agent/crawshrimp_runtime/phase_runner.py",
+    "src/vipshop_hot_strategy_agent/crawshrimp_runtime/runtime_downloads.py",
+    "src/vipshop_hot_strategy_agent/crawshrimp_runtime/web_agent_protocol.py",
     "src/vipshop_hot_strategy_agent/analysis.py",
     "skills/vipshop-hot-strategy-agent/SKILL.md",
     "references/metrics-and-rules.md",
@@ -31,9 +37,34 @@ def validate(root: Path) -> list[str]:
         text = skill.read_text(encoding="utf-8")
         if not re.search(r"^---\n.*?^---", text, re.M | re.S):
             errors.append("skill front matter missing")
-        for term in ["9222", "page-owned API", "read-only", "collect", "analyze", "strategy", "assistant reply"]:
+        for term in ["9222", "page-owned API", "read-only", "collect", "analyze", "strategy", "assistant reply", "auto CDP", "crawshrimp_runtime"]:
             if term not in text:
                 errors.append(f"skill missing term: {term}")
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file() and "websockets" not in pyproject.read_text(encoding="utf-8"):
+        errors.append("pyproject missing websockets dependency")
+    collect = root / "src/vipshop_hot_strategy_agent/collect.py"
+    if collect.is_file():
+        text = collect.read_text(encoding="utf-8")
+        for term in ["crawshrimp_runtime", "ensure_cdp_browser", "default_entry_url"]:
+            if term not in text:
+                errors.append(f"collect missing local runtime/CDP term: {term}")
+        for stale in ["/.codex/plugins/", "/Documents/crawshrimp/skills/"]:
+            if stale in text:
+                errors.append(f"collect still references external runtime path: {stale}")
+    runtime_root = root / "src/vipshop_hot_strategy_agent/crawshrimp_runtime"
+    if runtime_root.is_dir():
+        for runtime_file in runtime_root.glob("*.py"):
+            text = runtime_file.read_text(encoding="utf-8")
+            for stale in ["from scripts.", "from browser_executor", "from runtime_downloads", "from web_agent_protocol"]:
+                if stale in text:
+                    errors.append(f"{runtime_file.relative_to(root)} still has external runtime import: {stale}")
+    cli = root / "src/vipshop_hot_strategy_agent/cli.py"
+    if cli.is_file():
+        text = cli.read_text(encoding="utf-8")
+        for term in ["--auto-cdp", "BooleanOptionalAction", "--cdp-entry-url", "--chrome-profile-dir"]:
+            if term not in text:
+                errors.append(f"cli missing auto CDP term: {term}")
     asset = root / "assets/hot-strategy-tracking-report.js"
     if asset.is_file():
         text = asset.read_text(encoding="utf-8")

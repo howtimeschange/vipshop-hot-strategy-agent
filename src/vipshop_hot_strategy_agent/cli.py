@@ -13,6 +13,10 @@ def add_collect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cdp-url", default="http://127.0.0.1:9222")
     parser.add_argument("--tab-id", default="")
     parser.add_argument("--url-prefix", default="", help="Select the Chrome tab whose URL starts with this prefix.")
+    parser.add_argument("--auto-cdp", action=argparse.BooleanOptionalAction, default=True, help="Automatically prepare a local 9222 Chrome/CDP tab when needed.")
+    parser.add_argument("--cdp-entry-url", default="", help="URL opened when the CLI needs to create a CDP target tab.")
+    parser.add_argument("--chrome-path", default="", help="Chrome/Chromium executable used by auto CDP launch.")
+    parser.add_argument("--chrome-profile-dir", default="", help="Profile directory used by the auto-launched CDP Chrome.")
     parser.add_argument("--runtime-root", default="", help="Path to crawshrimp-skill/scripts.")
     parser.add_argument("--out-dir", default="~/Downloads")
     parser.add_argument("--brand-keyword", default="巴拉巴拉")
@@ -63,6 +67,9 @@ def command_collect(args: argparse.Namespace) -> int:
     params = build_params(args)
 
     def progress(event: dict) -> None:
+        if event.get("kind") == "cdp_ready":
+            launched = "launched" if event.get("launched") else "ready"
+            print(f"cdp={launched} tab={event.get('tab_id')} entry={event.get('entry_url')}", flush=True)
         if event.get("kind") == "before_phase":
             print(f"phase={event.get('phase')} records={event.get('records')}", flush=True)
 
@@ -73,6 +80,10 @@ def command_collect(args: argparse.Namespace) -> int:
         runtime_root=args.runtime_root or None,
         params=params,
         out_dir=args.out_dir,
+        auto_cdp=args.auto_cdp,
+        cdp_entry_url=args.cdp_entry_url,
+        chrome_path=args.chrome_path,
+        chrome_profile_dir=args.chrome_profile_dir,
         progress=progress,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -90,6 +101,9 @@ def command_run(args: argparse.Namespace) -> int:
     params = build_params(args)
 
     def progress(event: dict) -> None:
+        if event.get("kind") == "cdp_ready":
+            launched = "launched" if event.get("launched") else "ready"
+            print(f"cdp={launched} tab={event.get('tab_id')} entry={event.get('entry_url')}", flush=True)
         if event.get("kind") == "before_phase":
             print(f"phase={event.get('phase')} records={event.get('records')}", flush=True)
 
@@ -100,6 +114,10 @@ def command_run(args: argparse.Namespace) -> int:
         runtime_root=args.runtime_root or None,
         params=params,
         out_dir=args.out_dir,
+        auto_cdp=args.auto_cdp,
+        cdp_entry_url=args.cdp_entry_url,
+        chrome_path=args.chrome_path,
+        chrome_profile_dir=args.chrome_profile_dir,
         progress=progress,
     )
     analysis = analyze_workbook(collection["workbook"])
