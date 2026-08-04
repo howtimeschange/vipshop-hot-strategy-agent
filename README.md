@@ -62,6 +62,9 @@ vipshop-hot-strategy run \
   --bct-gift-activity-end 2026-08-06 \
   --bct-scene-activity-start 2026-07-29 \
   --bct-scene-activity-end 2026-08-06 \
+  --bct-product-export-type summary \
+  --compass-export-wait-seconds 180 \
+  --vipdirect-detail-source ad_list \
   --out-dir /Users/xingyicheng/Downloads
 ```
 
@@ -86,6 +89,12 @@ vipshop-hot-strategy doc-summary --out-dir /Users/xingyicheng/Downloads
 | 中台购物车/跨品类券 | `--bct-scene-activity-start` / `--bct-scene-activity-end` |
 
 `--bct-activity-start` 和 `--bct-activity-end` 保留为礼金、购物车/跨品类券的共用 fallback。
+
+魔方罗盘商品明细默认提交后台下载导出任务，避开页面表格接口 `10000` 条上限；CLI 会在等待窗口内尝试下载并解析文件，只保留 `--brand-keyword` 指定的巴拉巴拉口径。需要排查页面接口时可传 `--compass-table-api`，需要严格禁止降级时传 `--compass-export-required`。
+
+唯直达默认采集 `推广 > 站内广告 > 唯直达 > 广告` 页的商品 ID 广告明细，而不是旧的报表汇总接口。需要回看旧汇总口径时可传 `--vipdirect-summary-api`；广告页接口异常时默认降级到商品洞察的 MID x 广告明细接口，可用 `--vipdirect-no-product-insight-fallback` 禁止降级。
+
+中台礼金、购物车/跨品类券不再把策略效果页的活动列表当作商品明细写入 workbook。采集脚本会调用页面右上角「批量导出商品效果」同款下载中心配置：默认 `toolTaskMidSummary`（商品汇总效果数据），传 `--bct-product-export-type daily` 时使用 `toolTaskMidDaily`（商品每日新增效果数据明细）。如果下载中心文件在等待窗口内生成成功，CLI 会保存原始下载文件并把商品行解析进对应 sheet；若仍在生成中，sheet 会保留下载中心任务状态和筛选条件。
 
 ## 输出口径
 

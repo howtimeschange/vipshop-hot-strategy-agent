@@ -3,10 +3,14 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import base64
+import json
 from contextlib import redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from types import SimpleNamespace
+
+from openpyxl import Workbook, load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -15,7 +19,7 @@ if str(SRC) not in sys.path:
 
 from vipshop_hot_strategy_agent.analysis import analyze_workbook, write_analysis
 from vipshop_hot_strategy_agent.cli import main as cli_main
-from vipshop_hot_strategy_agent.collect import build_params
+from vipshop_hot_strategy_agent.collect import _expand_download_attachments, build_params
 from vipshop_hot_strategy_agent.excel_export import export_workbook
 
 
@@ -216,6 +220,128 @@ class AnalysisTest(unittest.TestCase):
             self.assertIn("报告按“未返回/不可算”展示", result.markdown)
             self.assertNotIn("活动成本 0.00，ROI 0.00", result.markdown)
 
+    def test_bct_product_effect_attachment_expands_to_goods_rows(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "商品效果"
+        ws.append(["导出说明", "", "", ""])
+        ws.append(["商品ID", "货号", "商品名称", "销售额（元）", "ROI"])
+        ws.append(["10001", "A100-RED", "红色T恤", 1234.5, 8.8])
+        buffer = BytesIO()
+        wb.save(buffer)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        rows = [
+            {
+                "__sheet_name": "中台礼金",
+                "报表来源": "中台营销：礼金",
+                "执行结果": "已下载商品效果文件",
+                "__attachment_base64": encoded,
+                "__attachment_file_name": "商品效果.xlsx",
+                "__attachment_context": json.dumps({
+                    "sheet": "中台礼金",
+                    "sourceLabel": "中台营销：礼金",
+                    "groupLabel": "用户生命周期运营",
+                    "brandSn": "BALA",
+                    "brandName": "巴拉巴拉",
+                    "configKey": "toolTaskMidSummary",
+                    "taskId": "D1",
+                    "exportLabel": "商品汇总效果数据",
+                }, ensure_ascii=False),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            expanded = _expand_download_attachments(rows, Path(tmp))
+            self.assertEqual(len(expanded), 2)
+            parsed = expanded[1]
+            self.assertEqual(parsed["__sheet_name"], "中台礼金")
+            self.assertEqual(parsed["商品ID"], "10001")
+            self.assertEqual(parsed["货号"], "A100-RED")
+            self.assertEqual(parsed["销售额"], 1234.5)
+            self.assertEqual(parsed["下载中心配置"], "toolTaskMidSummary")
+            self.assertTrue((Path(tmp) / "商品效果.xlsx").is_file())
+
+            workbook = export_workbook(expanded, tmp, filename="expanded.xlsx")
+            headers = [cell.value for cell in load_workbook(workbook)["中台礼金"][1]]
+            self.assertNotIn("__attachment_base64", headers)
+
+    def test_compass_backend_export_attachment_expands_and_filters_bala_rows(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "商品明细"
+        ws.append(["导出说明", "", "", "", "", "", ""])
+        ws.append(["品牌店铺", "MID", "货号", "商品名称", "销售额", "商详UV", "曝光量", "点击率", "在售库存"])
+        ws.append(["巴拉巴拉Balabala", "20001", "BALA-RED", "童装T恤", 2888.0, 1200, 5000, "6.50%", 80])
+        ws.append(["其它品牌", "30001", "OTHER-BLU", "其它商品", 1888.0, 900, 3000, "3.20%", 40])
+        buffer = BytesIO()
+        wb.save(buffer)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        rows = [
+            {
+                "__sheet_name": "魔方罗盘销售明细",
+                "报表来源": "魔方罗盘销售明细",
+                "执行结果": "已下载后台导出文件",
+                "__attachment_base64": encoded,
+                "__attachment_file_name": "compass.xlsx",
+                "__attachment_context": json.dumps({
+                    "sheet": "魔方罗盘销售明细",
+                    "sourceLabel": "魔方罗盘销售明细",
+                    "groupLabel": "商品明细",
+                    "brandName": "巴拉巴拉",
+                    "brandKeyword": "巴拉巴拉",
+                    "balaOnly": True,
+                    "configKey": "compass_product_detail_export",
+                    "taskId": "C1",
+                    "sourceApi": "/pc/mms/v1/item/export -> /pc/mms/v1/item/export/task/list",
+                }, ensure_ascii=False),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            expanded = _expand_download_attachments(rows, Path(tmp))
+            self.assertEqual(len(expanded), 2)
+            parsed = expanded[1]
+            self.assertEqual(parsed["__sheet_name"], "魔方罗盘销售明细")
+            self.assertEqual(parsed["商品ID"], "20001")
+            self.assertEqual(parsed["MID"], "20001")
+            self.assertEqual(parsed["货号"], "BALA-RED")
+            self.assertEqual(parsed["品牌名称"], "巴拉巴拉")
+            self.assertEqual(parsed["品牌店铺"], "巴拉巴拉Balabala")
+            self.assertEqual(parsed["曝光次数"], 5000)
+            self.assertEqual(parsed["导出任务ID"], "C1")
+            self.assertIn("/pc/mms/v1/item/export", parsed["数据来源接口"])
+
+            workbook = export_workbook(expanded, tmp, filename="compass-expanded.xlsx")
+            sheet = load_workbook(workbook)["魔方罗盘销售明细"]
+            headers = [cell.value for cell in sheet[1]]
+            self.assertIn("导出任务ID", headers)
+            self.assertIn("源文件工作表", headers)
+            mids = [row[headers.index("商品ID")].value for row in sheet.iter_rows(min_row=2)]
+            self.assertIn("20001", mids)
+            self.assertNotIn("30001", mids)
+
+    def test_vipdirect_workbook_headers_include_goods_ad_detail_fields(self) -> None:
+        rows = [
+            {"__sheet_name": "执行摘要", "报表来源": "test", "执行结果": "ok", "备注": "vipdirect detail"},
+            {
+                "__sheet_name": "唯直达投放效果",
+                "数据分组": "广告商品明细",
+                "广告名称": "搜索广告A",
+                "广告状态": "投放中",
+                "商品ID": "20001",
+                "MID": "20001",
+                "货号": "BALA-RED",
+                "商品名称": "童装T恤",
+                "投放资源": "唯直达",
+                "计费类型": "CPC",
+                "花费": 100,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            workbook = export_workbook(rows, tmp, filename="vipdirect-detail.xlsx")
+            headers = [cell.value for cell in load_workbook(workbook)["唯直达投放效果"][1]]
+            for header in ["广告状态", "商品ID", "MID", "货号", "商品名称", "图片链接", "投放资源", "计费类型"]:
+                self.assertIn(header, headers)
+            self.assertLess(headers.index("商品ID"), headers.index("花费"))
+
     def test_compass_reported_percent_is_not_multiplied_twice(self) -> None:
         rows = [
             {"__sheet_name": "执行摘要", "报表来源": "test", "执行结果": "ok", "备注": "reported percent"},
@@ -247,6 +373,8 @@ class AnalysisTest(unittest.TestCase):
         self.assertIn("--url-prefix", stdout.getvalue())
         self.assertIn("--bct-gift-activity-start", stdout.getvalue())
         self.assertIn("--bct-scene-activity-end", stdout.getvalue())
+        self.assertIn("--compass-table-api", stdout.getvalue())
+        self.assertIn("--vipdirect-summary-api", stdout.getvalue())
 
     def test_collect_params_keep_independent_report_ranges(self) -> None:
         args = SimpleNamespace(
@@ -266,11 +394,15 @@ class AnalysisTest(unittest.TestCase):
             bct_gift_activity_end="2026-08-06",
             bct_scene_activity_start="2026-08-01",
             bct_scene_activity_end="2026-08-03",
+            compass_export_wait_seconds=0,
+            vipdirect_detail_source="ad_list",
         )
         params = build_params(args)
 
         self.assertEqual(params["compass_start_date"], "2026-08-02")
+        self.assertEqual(params["compass_export_wait_seconds"], 0)
         self.assertEqual(params["vipdirect_end_date"], "2026-08-02")
+        self.assertEqual(params["vipdirect_detail_source"], "ad_list")
         self.assertEqual(params["tmax_start_date"], "2026-07-30")
         self.assertEqual(params["bct_gift_activity_start"], "2026-07-29")
         self.assertEqual(params["bct_scene_activity_end"], "2026-08-03")

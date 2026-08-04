@@ -18,8 +18,23 @@ def add_collect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--brand-keyword", default="巴拉巴拉")
     parser.add_argument("--compass-start-date", default="")
     parser.add_argument("--compass-end-date", default="")
+    parser.add_argument("--compass-brand-store-sn", default="", help="魔方罗盘 brandStoreSn；默认 all，并在导出解析时只保留品牌关键词。")
+    parser.add_argument("--compass-table-api", action="store_true", help="魔方改用页面商品表格接口；该接口可能只返回前 10000 条。")
+    parser.add_argument("--compass-export-required", action="store_true", help="魔方后台导出失败时直接失败，不降级到页面表格接口。")
+    parser.add_argument("--compass-export-wait-seconds", type=int, default=180, help="等待魔方后台导出生成的秒数；设为 0 只提交任务。")
+    parser.add_argument("--compass-export-poll-seconds", type=int, default=5, help="轮询魔方后台导出任务的间隔秒数。")
+    parser.add_argument("--compass-export-submit-url", default="", help="魔方后台导出提交接口覆盖，用于页面接口变更时调试。")
+    parser.add_argument("--compass-export-task-list-url", default="", help="魔方后台导出任务列表接口覆盖，用于页面接口变更时调试。")
     parser.add_argument("--vipdirect-start-date", default="")
     parser.add_argument("--vipdirect-end-date", default="")
+    parser.add_argument("--vipdirect-summary-api", action="store_true", help="唯直达改用旧的报表汇总接口；默认采集广告页商品 ID 明细。")
+    parser.add_argument(
+        "--vipdirect-detail-source",
+        choices=["ad_list", "product_insight"],
+        default="ad_list",
+        help="唯直达明细来源：ad_list=广告页按广告展开商品，product_insight=商品洞察 MID x 广告明细。",
+    )
+    parser.add_argument("--vipdirect-no-product-insight-fallback", action="store_true", help="广告页接口失败时不降级商品洞察接口。")
     parser.add_argument("--tmax-start-date", default="")
     parser.add_argument("--tmax-end-date", default="")
     parser.add_argument("--bct-activity-start", default="", help="Common BCT activity start fallback for gift and scene reports.")
@@ -28,6 +43,14 @@ def add_collect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--bct-gift-activity-end", default="", help="Activity end filter for 中台礼金.")
     parser.add_argument("--bct-scene-activity-start", default="", help="Activity start filter for 中台购物车/跨品类券.")
     parser.add_argument("--bct-scene-activity-end", default="", help="Activity end filter for 中台购物车/跨品类券.")
+    parser.add_argument(
+        "--bct-product-export-type",
+        choices=["summary", "daily"],
+        default="summary",
+        help="BCT 商品效果导出类型：summary=商品汇总效果数据，daily=商品每日新增效果数据明细。",
+    )
+    parser.add_argument("--bct-download-wait-seconds", type=int, default=120, help="Wait seconds for BCT download-center product export.")
+    parser.add_argument("--bct-download-poll-seconds", type=int, default=5, help="Poll interval seconds for BCT download-center product export.")
     parser.add_argument("--page-size", type=int, default=300)
     parser.add_argument("--bct-page-size", type=int, default=50)
     parser.add_argument("--max-pages", type=int, default=300)

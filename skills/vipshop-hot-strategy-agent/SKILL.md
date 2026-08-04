@@ -49,6 +49,7 @@ python3 -m vipshop_hot_strategy_agent.cli run \
   --bct-gift-activity-end 2026-08-06 \
   --bct-scene-activity-start 2026-07-29 \
   --bct-scene-activity-end 2026-08-06 \
+  --bct-product-export-type summary \
   --out-dir /Users/xingyicheng/Downloads
 ```
 
@@ -98,6 +99,12 @@ Read `references/metrics-and-rules.md` before making business claims. The minimu
 If action records, product basics, reference groups, touch/open/click/claim, gross margin, or aftersales data are missing, call that out as a data gap instead of overstating attribution.
 
 When a report column or page-owned API field is absent, render it as `未返回` or `不可算` in the Markdown and assistant summary. Only render `0` when the source field was actually returned with an explicit zero value.
+
+BCT 礼金、购物车/跨品类券采集应使用策略效果页右上角「批量导出商品效果」路径（下载中心配置 `toolTaskMidSummary` / `toolTaskMidDaily`），不要把 `/bcc/toolbox_task/list` 的活动效果列表当作商品明细。
+
+魔方罗盘商品明细默认走后台下载导出任务，避开页面表格接口 `10000` 条上限；解析附件时只保留巴拉巴拉口径。只有排查接口时才使用 `--compass-table-api`，并在回复里说明这可能受 10000 条上限影响。
+
+唯直达默认使用 `推广 > 站内广告 > 唯直达 > 广告` 的广告商品明细口径，输出商品ID/MID、广告名称和广告指标；不要把旧 `ck/report/table` 汇总数据当作用户要的商品广告明细。若临时使用 `--vipdirect-summary-api` 或商品洞察降级，应在回复里明确口径。
 
 ## Safety Reference
 

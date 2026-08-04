@@ -40,6 +40,15 @@ def validate(root: Path) -> list[str]:
         for term in ["bct_gift_activity_start", "bct_gift_activity_end", "bct_scene_activity_start", "bct_scene_activity_end", "活动过滤"]:
             if term not in text:
                 errors.append(f"asset missing term: {term}")
+        for term in ["toolTaskMidSummary", "toolTaskMidDaily", "/bcc/vendorBrand/downCenter/add", "批量导出商品效果"]:
+            if term not in text:
+                errors.append(f"asset missing BCT product export term: {term}")
+        for term in ["/pc/mms/v1/item/export", "/pc/mms/v1/item/export/task/list", "compass_export_wait_seconds", "后台下载导出"]:
+            if term not in text:
+                errors.append(f"asset missing Compass export term: {term}")
+        for term in ["/ad/list/v2", "/product/insight/ad/list", "vipdirect_detail_source", "推广 > 站内广告 > 唯直达 > 广告"]:
+            if term not in text:
+                errors.append(f"asset missing VipDirect detail term: {term}")
         for term in ["impressionUv", "impressionNum", "addUserNum", "addItemNum", "merchandiseLikeUserNum", "useUser"]:
             if term not in text:
                 errors.append(f"asset missing live metric mapping: {term}")
