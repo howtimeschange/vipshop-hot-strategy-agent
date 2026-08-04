@@ -90,7 +90,7 @@ vipshop-hot-strategy doc-summary --out-dir /Users/xingyicheng/Downloads
 
 `--bct-activity-start` 和 `--bct-activity-end` 保留为礼金、购物车/跨品类券的共用 fallback。
 
-魔方罗盘商品明细默认走页面同款后台导出链路：`/product/detail/asyncExportGoodsList` 提交任务，`/report/asyncdownload/queryTaskList` 查询下载中心，`/report/asyncdownload/getOutputFile` 自动下载文件，避开页面表格接口 `10000` 条上限；CLI 会在等待窗口内尝试下载并解析文件，只保留 `--brand-keyword` 指定的巴拉巴拉口径。后台导出失败时默认不再降级写入页面表格，避免把 `10000` 条上限内的数据误当完整明细；需要排查页面接口时可传 `--compass-table-api`，需要显式允许降级时传 `--compass-table-fallback`，需要严格失败时传 `--compass-export-required`。
+魔方罗盘商品明细默认走页面同款后台导出链路：`/product/detail/asyncExportGoodsList` 提交任务，`/report/asyncdownload/queryTaskList` 查询下载中心，`/report/asyncdownload/getOutputFile` 自动下载文件，避开页面表格接口 `10000` 条上限；默认导出 `filter` 按商品明细页「自定义指标」全选口径生成，最终 `魔方罗盘销售明细` sheet 也按页面字段名和顺序输出。CLI 会在等待窗口内尝试下载并解析文件，只保留 `--brand-keyword` 指定的巴拉巴拉口径。后台导出失败时默认不再降级写入页面表格，避免把 `10000` 条上限内的数据误当完整明细；需要排查页面接口时可传 `--compass-table-api`，需要显式允许降级时传 `--compass-table-fallback`，需要严格失败时传 `--compass-export-required`。如果下载中心存在旧字段口径任务，CLI 会按当前 `filter` 校验并跳过；需要强制新建任务时传 `--compass-force-new-export`。
 
 唯直达默认采集 `推广 > 站内广告 > 唯直达 > 广告` 页（`#/promotion/insite/search/advertisement`）的商品 ID 广告明细，而不是旧的报表汇总接口。需要回看旧汇总口径时可传 `--vipdirect-summary-api`；商品洞察口径必须提供 `--vipdirect-mid`。广告页接口异常时，只有提供 MID 才会降级到商品洞察的 MID x 广告明细接口，否则保留广告页接口错误，避免空 MID 请求返回 `1001` 掩盖真实问题。
 

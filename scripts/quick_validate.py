@@ -43,7 +43,7 @@ def validate(root: Path) -> list[str]:
         for term in ["toolTaskMidSummary", "toolTaskMidDaily", "/bcc/vendorBrand/downCenter/add", "批量导出商品效果", "/bcc/file_common/fileSecurityDown"]:
             if term not in text:
                 errors.append(f"asset missing BCT product export term: {term}")
-        for term in ["/product/detail/asyncExportGoodsList", "/report/asyncdownload/queryTaskList", "/report/asyncdownload/getOutputFile", "compass_export_wait_seconds", "compass_table_fallback", "后台下载导出", "执行成功"]:
+        for term in ["/product/detail/asyncExportGoodsList", "/report/asyncdownload/queryTaskList", "/report/asyncdownload/getOutputFile", "compass_export_wait_seconds", "compass_table_fallback", "COMPASS_FULL_EXPORT_FIELDS", "compass_force_new_export", "后台下载导出", "执行成功"]:
             if term not in text:
                 errors.append(f"asset missing Compass export term: {term}")
         if "/pc/mms/v1/item/export" in text:
@@ -53,7 +53,7 @@ def validate(root: Path) -> list[str]:
                 errors.append(f"asset missing VipDirect detail term: {term}")
         if "#/promotion/insite/search/adList" in text:
             errors.append("asset still references stale VipDirect adList route")
-        for term in ["impressionUv", "impressionNum", "addUserNum", "addItemNum", "merchandiseLikeUserNum", "useUser"]:
+        for term in ["impressionUv", "pageMerDetailConvRate", "brandUserStrategyRoi", "wxkStrategyCostAmt", "impressionNum", "addUserNum", "addItemNum", "merchandiseLikeUserNum", "useUser"]:
             if term not in text:
                 errors.append(f"asset missing live metric mapping: {term}")
     return errors

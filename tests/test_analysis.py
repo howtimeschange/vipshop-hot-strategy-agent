@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import base64
 import json
+import subprocess
 import threading
 import zipfile
 from contextlib import redirect_stdout
@@ -321,6 +322,68 @@ class AnalysisTest(unittest.TestCase):
             self.assertIn("20001", mids)
             self.assertNotIn("30001", mids)
 
+    def test_compass_backend_export_attachment_maps_all_selected_metric_headers(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "商品明细"
+        ws.append(["导出说明", "", "", "", "", "", "", "", "", "", "", ""])
+        ws.append([
+            "品牌名称", "日期", "商品ID", "商品名称", "货号", "款号", "P_SPU_ID", "商品图片",
+            "三级品类", "售龄", "货品类型", "适用季节", "唯品价", "到手价", "市场价", "折扣",
+            "曝光UV", "商详UV", "曝光-点击率", "CTR", "销售额", "销售数量", "品牌新客数",
+            "购买转化率", "销售额(不含拒退)", "销售量(不含拒退)", "会员权益ROI", "唯享客成本",
+        ])
+        ws.append([
+            "巴拉巴拉Balabala", "2026-08-03", "20001", "童装T恤", "BALA-RED", "A100", "SPU-1", "https://img.example/a.jpg",
+            "童装/T恤", 15, "普通货品", "夏季", 129, 99, 199, "5折",
+            5000, 1200, "6.50%", "7.25%", 2888.0, 80, 12,
+            "10.00%", 2800.0, 75, 9.8, 18.6,
+        ])
+        buffer = BytesIO()
+        wb.save(buffer)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        rows = [
+            {
+                "__sheet_name": "魔方罗盘销售明细",
+                "报表来源": "魔方罗盘销售明细",
+                "执行结果": "已下载后台导出文件",
+                "__attachment_base64": encoded,
+                "__attachment_file_name": "compass-full-metrics.xlsx",
+                "__attachment_context": json.dumps({
+                    "sheet": "魔方罗盘销售明细",
+                    "sourceLabel": "魔方罗盘销售明细",
+                    "groupLabel": "商品明细",
+                    "brandName": "巴拉巴拉",
+                    "brandKeyword": "巴拉巴拉",
+                    "balaOnly": True,
+                    "configKey": "compass_product_detail_export",
+                    "taskId": "C-full",
+                    "sourceApi": "/product/detail/asyncExportGoodsList -> /report/asyncdownload/getOutputFile",
+                }, ensure_ascii=False),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            expanded = _expand_download_attachments(rows, Path(tmp))
+            parsed = expanded[1]
+            self.assertEqual(parsed["统计日期"], "2026-08-03")
+            self.assertEqual(parsed["销售量"], 80)
+            self.assertEqual(parsed["曝光UV"], 5000)
+            self.assertEqual(parsed["曝光-点击率"], "6.50%")
+            self.assertEqual(parsed["会员权益ROI"], 9.8)
+            self.assertEqual(parsed["唯享客成本"], 18.6)
+
+            workbook = export_workbook(expanded, tmp, filename="compass-full-metrics-expanded.xlsx")
+            headers = [cell.value for cell in load_workbook(workbook)["魔方罗盘销售明细"][1]]
+            expected_order = [
+                "统计日期", "商品ID", "商品名称", "货号", "款号", "P_SPU_ID", "商品图片",
+                "三级品类", "售龄", "货品类型", "适用季节", "唯品价", "到手价", "市场价", "折扣",
+                "曝光UV", "商详UV", "曝光-点击率", "CTR", "销售额", "销售量", "品牌新客数",
+                "购买转化率", "销售额(不含拒退)", "销售量(不含拒退)", "会员权益ROI", "唯享客成本",
+            ]
+            self.assertEqual([header for header in headers if header in expected_order][:len(expected_order)], expected_order)
+            self.assertLess(headers.index("曝光UV"), headers.index("商详UV"))
+            self.assertLess(headers.index("销售量"), headers.index("客户数"))
+
     def test_compass_backend_export_keeps_rows_when_brand_name_and_numeric_sn_are_separate(self) -> None:
         wb = Workbook()
         ws = wb.active
@@ -570,8 +633,46 @@ class AnalysisTest(unittest.TestCase):
             result = analyze_workbook(workbook)
 
             self.assertAlmostEqual(result.metrics["compass"]["click_rate"], 0.0725)
-            self.assertIn("商品点击率 7.25%", result.markdown)
-            self.assertNotIn("商品点击率 725.00%", result.markdown)
+            self.assertIn("曝光-点击率/CTR 7.25%", result.markdown)
+            self.assertNotIn("曝光-点击率/CTR 725.00%", result.markdown)
+
+    def test_compass_export_payload_uses_all_selected_metric_filter(self) -> None:
+        script = f"""
+global.window = {{__CRAWSHRIMP_PARAMS__: {{}}, __CRAWSHRIMP_PHASE__: '__exports__', __CRAWSHRIMP_EXPORTS__: {{}}}};
+global.location = {{href: 'https://compass.vip.com/frontend/index.html#/product/details'}};
+global.document = {{body: {{innerText: ''}}}};
+require({json.dumps(str(ROOT / "assets" / "hot-strategy-tracking-report.js"))});
+setImmediate(() => {{
+  const helpers = global.window.__CRAWSHRIMP_EXPORTS__;
+  const payload = helpers.buildCompassExportPayload({{startDt: '20260803', endDt: '20260803'}}, {{page_size: 300}});
+  const context = {{taskType: 1, allowExisting: true, payload}};
+  const staleTask = {{
+    taskType: 1,
+    fileName: '商品明细.xlsx',
+    requestParams: JSON.stringify({{startDt: '20260803', endDt: '20260803', dimType: 0, filter: 'merchandiseNo,dt,goodsName'}}),
+  }};
+  const fullTask = {{
+    taskType: 1,
+    fileName: '商品明细.xlsx',
+    requestParams: JSON.stringify({{startDt: '20260803', endDt: '20260803', dimType: 0, filter: payload.filter}}),
+  }};
+  console.log(JSON.stringify({{
+    fields: helpers.COMPASS_FULL_EXPORT_FIELDS,
+    filter: payload.filter,
+    queryExtendMetric: payload.queryExtendMetric,
+    staleMatches: helpers.compassExportTaskMatches(staleTask, context),
+    fullMatches: helpers.compassExportTaskMatches(fullTask, context),
+  }}));
+}});
+"""
+        completed = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        self.assertTrue(payload["queryExtendMetric"])
+        for field in ["impressionUv", "uv", "pageMerDetailConvRate", "brandUserStrategyRoi", "wxkStrategyCostAmt"]:
+            self.assertIn(field, payload["fields"])
+            self.assertIn(field, payload["filter"])
+        self.assertFalse(payload["staleMatches"])
+        self.assertTrue(payload["fullMatches"])
 
     def test_collect_help_exposes_url_prefix_selector(self) -> None:
         stdout = StringIO()
@@ -584,6 +685,7 @@ class AnalysisTest(unittest.TestCase):
         self.assertIn("--bct-scene-activity-end", stdout.getvalue())
         self.assertIn("--compass-table-api", stdout.getvalue())
         self.assertIn("--compass-table-fallback", stdout.getvalue())
+        self.assertIn("--compass-force-new-export", stdout.getvalue())
         self.assertIn("--vipdirect-summary-api", stdout.getvalue())
         self.assertIn("--vipdirect-mid", stdout.getvalue())
 
@@ -595,6 +697,7 @@ class AnalysisTest(unittest.TestCase):
             brand_keyword="巴拉巴拉",
             compass_start_date="2026-08-02",
             compass_end_date="2026-08-02",
+            compass_force_new_export=True,
             vipdirect_start_date="2026-08-01",
             vipdirect_end_date="2026-08-02",
             tmax_start_date="2026-07-30",
@@ -615,6 +718,7 @@ class AnalysisTest(unittest.TestCase):
         self.assertEqual(params["compass_start_date"], "2026-08-02")
         self.assertEqual(params["compass_export_wait_seconds"], 0)
         self.assertTrue(params["compass_table_fallback"])
+        self.assertTrue(params["compass_force_new_export"])
         self.assertEqual(params["vipdirect_end_date"], "2026-08-02")
         self.assertEqual(params["vipdirect_detail_source"], "ad_list")
         self.assertEqual(params["vipdirect_mid"], "20001")

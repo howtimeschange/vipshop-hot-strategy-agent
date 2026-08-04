@@ -74,6 +74,88 @@
   const DEFAULT_MAX_PAGES = 80
   const DEFAULT_DELAY_MS = 80
   const SUCCESS_CODES = ['0', '1', '200']
+  const COMPASS_BASE_EXPORT_FIELDS = [
+    'merchandiseNo',
+    'dt',
+    'goodsName',
+    'goodsNo',
+    'osn',
+    'prodSpuId',
+    'imgUrl',
+    'brandStoreSn',
+    'brandStoreName',
+  ]
+  const COMPASS_CUSTOM_METRIC_FIELDS = [
+    'thirdCateName',
+    'productSellAge',
+    'merTypeList',
+    'suitSeason',
+    'minVipshopPrice',
+    'minPayPrice',
+    'minMarketPrice',
+    'discountRangeName',
+    'firstShelfTime',
+    'mainStyleName',
+    'status',
+    'impressionUv',
+    'uv',
+    'impressionClickRate',
+    'ctr',
+    'valueOfUv',
+    'valueOfImpressionUv',
+    'merchandiseLikeUserNum',
+    'merchandiseLikeRate',
+    'addUserNum',
+    'addRate',
+    'interestedUserNum',
+    'interestedUserMerNum',
+    'goodsActureAmt',
+    'goodsActureNum',
+    'userNum',
+    'bctNewUser',
+    'pageMerDetailConvRate',
+    'couponAmt',
+    'resultGoodsActureAmt',
+    'resultGoodsActureNum',
+    'itemUnitPrice',
+    'userUnitPrice',
+    'svipGoodsActureAmt',
+    'svipGoodsActureNum',
+    'svipUserNum',
+    'brandGoodsActureAmt',
+    'brandGoodsActureNum',
+    'brandUserNum',
+    'returnItemNum',
+    'rejectItemNum',
+    'rejectAndReturnItemNum',
+    'exchangeItemNum',
+    'returnGoodsAmt',
+    'rejectGoodsAmt',
+    'rejectAndReturnGoodsAmt',
+    'exchangeGoodsAmt',
+    'returnItemRate',
+    'rejectItemRate',
+    'rejectAndReturnItemRate',
+    'exchangeItemRate',
+    'onSellLeavingNum',
+    'leavingNum',
+    'onSellValueOfVipshop',
+    'onSellValueOfPay',
+    'salesRateOfNum',
+    'userStrategyRoi',
+    'userStrategyGoodsActureAmt',
+    'userStrategyCostAmt',
+    'brandUserStrategyRoi',
+    'brandUserStrategyGoodsActureAmt',
+    'brandUserStrategyCostAmt',
+    'wxkStrategyRoi',
+    'wxkStrategyGoodsActureAmt',
+    'wxkStrategyCostAmt',
+  ]
+  const COMPASS_FULL_EXPORT_FIELDS = [
+    ...COMPASS_BASE_EXPORT_FIELDS,
+    ...COMPASS_CUSTOM_METRIC_FIELDS,
+  ]
 
   const DEFAULT_REPORT_SCOPE = [
     'compass_sales_detail',
@@ -770,13 +852,11 @@
 
   function normalizeCompassSalesRow(row) {
     const knownKeys = [
-      'actureAmt', 'actureNum', 'brandStoreName', 'brandStoreSn', 'channelName', 'channelType',
-      'dt', 'firstCateName', 'goodsActureAmt', 'goodsActureNum', 'goodsName', 'goodsNo', 'imgUrl',
-      'leavingNum', 'merTypeList', 'merchandiseNo', 'minMarketPrice', 'minPayPrice', 'minVipshopPrice',
-      'onSellLeavingNum', 'osn', 'productSellAge', 'secCateName', 'status', 'thirdCateName',
-      'userNum', 'uv', 'visitorNum', 'exposureUserNum', 'clickUserNum', 'collectNum', 'cartNum',
-      'impressionUv', 'impressionNum', 'impressionClickRate', 'ctr', 'addUserNum', 'addItemNum',
-      'merchandiseLikeUserNum', 'orderUserNum', 'orderAmt', 'roi', 'canSellStockDay',
+      ...COMPASS_FULL_EXPORT_FIELDS,
+      'actureAmt', 'actureNum', 'channelName', 'channelType', 'discountRange',
+      'firstCateName', 'secCateName', 'visitorNum', 'exposureUserNum', 'clickUserNum',
+      'collectNum', 'cartNum', 'impressionNum', 'addItemNum', 'orderUserNum', 'orderAmt',
+      'roi', 'canSellStockDay', 'salesAmt', 'saleAmt', 'payAmt', 'salesNum', 'saleNum',
     ]
     const output = {
       __sheet_name: COMPASS_SHEET,
@@ -785,38 +865,77 @@
       品牌编码: compact(row.brandStoreSn),
       品牌名称: compact(row.brandStoreName),
       统计日期: formatDate(row.dt),
-      款号: inferStyleCode(row),
-      货号: compact(row.goodsNo || row.msn),
       商品ID: compact(row.merchandiseNo),
       商品名称: compact(row.goodsName),
-      一级品类: compact(row.firstCateName),
-      二级品类: compact(row.secCateName),
+      货号: compact(row.goodsNo || row.msn),
+      款号: inferStyleCode(row),
+      P_SPU_ID: compact(row.prodSpuId),
+      商品图片: compact(row.imgUrl),
       三级品类: compact(row.thirdCateName),
-      售卖渠道: formatSellChannel(row.channelType || row.channelName),
-      市场价: compact(row.minMarketPrice),
+      售龄: compact(row.productSellAge),
+      货品类型: joinList(row.merTypeList),
+      适用季节: compact(row.suitSeason),
       唯品价: compact(row.minVipshopPrice),
       到手价: compact(row.minPayPrice),
-      销售额: firstNonEmpty(row.goodsActureAmt, row.actureAmt, row.salesAmt, row.saleAmt, row.payAmt),
-      销售数量: firstNonEmpty(row.goodsActureNum, row.actureNum, row.salesNum, row.saleNum),
-      客户数: firstNonEmpty(row.userNum, row.customNum, row.customerNum),
+      市场价: compact(row.minMarketPrice),
+      折扣: firstNonEmpty(row.discountRangeName, row.discountRange),
+      首次上架时间: compact(row.firstShelfTime),
+      主款式: compact(row.mainStyleName),
+      是否上架: normalizeStatus(row.status),
+      曝光UV: firstNonEmpty(row.impressionUv, row.exposureUserNum, row.exposeUserNum),
       商详UV: firstNonEmpty(row.uv, row.detailUv, row.goodsUv),
-      曝光人数: firstNonEmpty(row.exposureUserNum, row.exposeUserNum, row.impressionUv),
-      曝光次数: firstNonEmpty(row.impressionNum),
-      访问人数: firstNonEmpty(row.visitorNum),
-      点击人数: firstNonEmpty(row.clickUserNum, row.clickNum),
-      商品点击率: firstNonEmpty(row.impressionClickRate, row.ctr),
-      收藏数: firstNonEmpty(row.collectNum, row.favNum, row.favoriteNum, row.merchandiseLikeUserNum),
-      加购数: firstNonEmpty(row.cartNum, row.addCartNum, row.addToCartNum, row.addUserNum),
-      加购件数: firstNonEmpty(row.addItemNum),
-      下单客户数: firstNonEmpty(row.orderUserNum, row.orderCustomerNum),
-      订单额: firstNonEmpty(row.orderAmt, row.orderAmount),
-      ROI: firstNonEmpty(row.roi, row.dealRoi),
-      在售库存: compact(row.onSellLeavingNum ?? row.leavingNum),
-      库存天数: compact(row.canSellStockDay),
-      售龄: compact(row.productSellAge),
-      商品状态: normalizeStatus(row.status),
-      商品标签: joinList(row.merTypeList),
-      图片链接: compact(row.imgUrl),
+      '曝光-点击率': firstNonEmpty(row.impressionClickRate),
+      CTR: firstNonEmpty(row.ctr),
+      商详UV价值: firstNonEmpty(row.valueOfUv),
+      曝光UV价值: firstNonEmpty(row.valueOfImpressionUv),
+      收藏人数: firstNonEmpty(row.merchandiseLikeUserNum, row.collectNum, row.favNum, row.favoriteNum),
+      收藏率: firstNonEmpty(row.merchandiseLikeRate),
+      加购人数: firstNonEmpty(row.addUserNum, row.cartNum, row.addCartNum, row.addToCartNum),
+      加购率: firstNonEmpty(row.addRate),
+      兴趣人数: firstNonEmpty(row.interestedUserNum),
+      兴趣人次: firstNonEmpty(row.interestedUserMerNum),
+      销售额: firstNonEmpty(row.goodsActureAmt, row.actureAmt, row.salesAmt, row.saleAmt, row.payAmt),
+      销售量: firstNonEmpty(row.goodsActureNum, row.actureNum, row.salesNum, row.saleNum),
+      客户数: firstNonEmpty(row.userNum, row.customNum, row.customerNum),
+      品牌新客数: firstNonEmpty(row.bctNewUser),
+      购买转化率: firstNonEmpty(row.pageMerDetailConvRate),
+      优惠券金额: firstNonEmpty(row.couponAmt),
+      '销售额(不含拒退)': firstNonEmpty(row.resultGoodsActureAmt),
+      '销售量(不含拒退)': firstNonEmpty(row.resultGoodsActureNum),
+      件单价: firstNonEmpty(row.itemUnitPrice),
+      ARPU: firstNonEmpty(row.userUnitPrice),
+      超V销售额: firstNonEmpty(row.svipGoodsActureAmt),
+      超V销售量: firstNonEmpty(row.svipGoodsActureNum),
+      超V客户数: firstNonEmpty(row.svipUserNum),
+      品牌会员销售额: firstNonEmpty(row.brandGoodsActureAmt),
+      品牌会员销售量: firstNonEmpty(row.brandGoodsActureNum),
+      品牌会员客户数: firstNonEmpty(row.brandUserNum),
+      退货件数: firstNonEmpty(row.returnItemNum),
+      拒收件数: firstNonEmpty(row.rejectItemNum),
+      拒退件数: firstNonEmpty(row.rejectAndReturnItemNum),
+      换货件数: firstNonEmpty(row.exchangeItemNum),
+      退货金额: firstNonEmpty(row.returnGoodsAmt),
+      拒收金额: firstNonEmpty(row.rejectGoodsAmt),
+      拒退金额: firstNonEmpty(row.rejectAndReturnGoodsAmt),
+      换货金额: firstNonEmpty(row.exchangeGoodsAmt),
+      退货率: firstNonEmpty(row.returnItemRate),
+      拒收率: firstNonEmpty(row.rejectItemRate),
+      拒退率: firstNonEmpty(row.rejectAndReturnItemRate),
+      换货率: firstNonEmpty(row.exchangeItemRate),
+      在售库存: firstNonEmpty(row.onSellLeavingNum),
+      可售库存: firstNonEmpty(row.leavingNum),
+      在售唯品价货值: firstNonEmpty(row.onSellValueOfVipshop),
+      在售到手价货值: firstNonEmpty(row.onSellValueOfPay),
+      售卖比: firstNonEmpty(row.salesRateOfNum),
+      用户策略ROI: firstNonEmpty(row.userStrategyRoi),
+      用户策略销售额: firstNonEmpty(row.userStrategyGoodsActureAmt),
+      用户策略成本: firstNonEmpty(row.userStrategyCostAmt),
+      会员权益ROI: firstNonEmpty(row.brandUserStrategyRoi),
+      会员权益销售额: firstNonEmpty(row.brandUserStrategyGoodsActureAmt),
+      会员权益成本: firstNonEmpty(row.brandUserStrategyCostAmt),
+      唯享客ROI: firstNonEmpty(row.wxkStrategyRoi),
+      唯享客销售额: firstNonEmpty(row.wxkStrategyGoodsActureAmt),
+      唯享客成本: firstNonEmpty(row.wxkStrategyCostAmt),
       数据来源接口: GOODS_DETAIL_URL,
       执行结果: '已抓取',
       备注: '',
@@ -932,7 +1051,7 @@
     const query = buildGoodsDetailPayload(1, getPageSize('compass', rawParams), dateRange, rawParams)
     const brandStoreSn = compact(rawParams.compass_brand_store_sn || rawParams.brand_store_sn || rawParams.brandStoreSn || 'all') || 'all'
     const exportFilter = compact(rawParams.compass_export_filter)
-      || 'merchandiseNo,dt,goodsName,goodsNo,osn,prodSpuId,imgUrl,merTypeList,brandStoreSn,brandStoreName,uv,goodsActureAmt,goodsActureNum,userNum,bctNewUser,onSellLeavingNum,addUserNum,addItemNum,merchandiseLikeUserNum'
+      || COMPASS_FULL_EXPORT_FIELDS.join(',')
     const payload = {
       brandStoreSnSet: brandStoreSn === 'all' ? ['all'] : [brandStoreSn],
       calType: query.calType,
@@ -942,7 +1061,7 @@
       startDt: dateRange.startDt,
       endDt: dateRange.endDt,
       filter: exportFilter,
-      queryExtendMetric: /bctNewUser|svip|brand|addUserNum|addItemNum|merchandiseLikeUserNum/.test(exportFilter),
+      queryExtendMetric: parseBooleanFlag(rawParams.compass_query_extend_metric, true),
       queryHll: parseBooleanFlag(rawParams.compass_query_hll, false),
       specialMenusUser: parseBooleanFlag(rawParams.compass_special_menus_user, false),
     }
@@ -1018,6 +1137,21 @@
     return compact(task?.taskId || task?.id || task?.taskNo || task?.downloadTaskId)
   }
 
+  function normalizeFilterFields(value) {
+    return new Set(compact(value).split(',').map(compact).filter(Boolean))
+  }
+
+  function taskFilterCoversPayload(taskFilter, payloadFilter) {
+    const expected = normalizeFilterFields(payloadFilter)
+    if (!expected.size) return true
+    const actual = normalizeFilterFields(taskFilter)
+    if (!actual.size) return false
+    for (const field of expected) {
+      if (!actual.has(field)) return false
+    }
+    return true
+  }
+
   function compassExportTaskMatches(task, context) {
     const expectedTaskId = compact(context.taskId)
     if (expectedTaskId && exportTaskId(task) === expectedTaskId) return true
@@ -1029,6 +1163,13 @@
     if (requestParams.startDt && context.payload?.startDt && compact(requestParams.startDt) !== compact(context.payload.startDt)) return false
     if (requestParams.endDt && context.payload?.endDt && compact(requestParams.endDt) !== compact(context.payload.endDt)) return false
     if (requestParams.dimType != null && context.payload?.dimType != null && Number(requestParams.dimType) !== Number(context.payload.dimType)) return false
+    if (context.payload?.filter) {
+      if (requestParams.filter) {
+        if (!taskFilterCoversPayload(requestParams.filter, context.payload.filter)) return false
+      } else if (context.allowExisting) {
+        return false
+      }
+    }
     const text = [
       task?.fileName,
       task?.outputFileName,
@@ -1238,7 +1379,7 @@
         brandName: compassBrandKeyword(rawParams),
         brandKeyword: compassBrandKeyword(rawParams),
         balaOnly: compassBalaOnly(rawParams),
-        exportLabel: '后台下载导出商品明细',
+        exportLabel: '后台下载导出商品明细（自定义指标全选）',
         configKey: 'compass_product_detail_export',
         taskId,
         sourceApi: `${compassExportSubmitUrl(rawParams)} -> ${compassExportTaskListUrl(rawParams)} -> ${compassExportFileUrl(rawParams)}`,
@@ -2498,7 +2639,9 @@
       extractCompassDateRange,
       buildGoodsDetailPayload,
       normalizeCompassSalesRow,
+      COMPASS_FULL_EXPORT_FIELDS,
       buildCompassExportPayload,
+      compassExportTaskMatches,
       collectCompassSalesRowsByExport,
       collectCompassSalesRowsByTable,
       extractVipDirectDateRange,

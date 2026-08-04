@@ -168,22 +168,22 @@ def summarize_compass(rows: list[dict[str, Any]]) -> dict[str, Any]:
     sales_returned = has_any(rows, "销售额")
     customers_returned = has_any(rows, "客户数")
     detail_uv_returned = has_any(rows, "商详UV")
-    exposures_returned = has_any(rows, "曝光人数")
-    impression_count_returned = has_any(rows, "曝光次数")
-    clicks_returned = has_any(rows, "点击人数")
-    reported_click_rate_returned = has_any(rows, "商品点击率")
-    addcarts_returned = has_any(rows, "加购数")
+    exposures_returned = has_any(rows, "曝光UV", "曝光人数")
+    impression_count_returned = has_any(rows, "曝光次数", "曝光量")
+    clicks_returned = has_any(rows, "点击量", "点击人数")
+    reported_click_rate_returned = has_any(rows, "曝光-点击率", "CTR", "商品点击率")
+    addcarts_returned = has_any(rows, "加购人数", "加购数")
     orders_returned = has_any(rows, "下单客户数")
     sales = sum(as_number(row.get("销售额")) for row in rows)
-    quantity = sum(as_number(row.get("销售数量")) for row in rows)
+    quantity = sum_first(rows, "销售量", "销售数量")
     customers = sum(as_number(row.get("客户数")) for row in rows)
     detail_uv = sum(as_number(row.get("商详UV")) for row in rows)
-    exposures = sum(as_number(row.get("曝光人数")) for row in rows)
-    impression_count = sum(as_number(row.get("曝光次数")) for row in rows)
-    clicks = sum(as_number(row.get("点击人数")) for row in rows)
-    addcarts = sum(as_number(row.get("加购数")) for row in rows)
+    exposures = sum_first(rows, "曝光UV", "曝光人数")
+    impression_count = sum_first(rows, "曝光次数", "曝光量")
+    clicks = sum_first(rows, "点击量", "点击人数")
+    addcarts = sum_first(rows, "加购人数", "加购数")
     orders = sum(as_number(row.get("下单客户数")) for row in rows)
-    reported_click_rate = average_rate_first(rows, "商品点击率")
+    reported_click_rate = average_rate_first(rows, "曝光-点击率", "CTR", "商品点击率")
     if exposures_returned and exposures > 0 and clicks_returned:
         click_rate = safe_ratio(clicks, exposures)
         click_rate_returned = True
@@ -376,11 +376,11 @@ def compass_label(compass: dict[str, Any]) -> tuple[str, str, str]:
         return "暂无法判断", "低", "魔方罗盘无销售明细行，无法建立商品过程和终端指标基线。"
     missing = []
     if not compass.get("exposures_returned"):
-        missing.append("曝光人数")
+        missing.append("曝光UV")
     if not compass.get("clicks_returned"):
-        missing.append("点击人数")
+        missing.append("点击量")
     if not compass.get("addcarts_returned"):
-        missing.append("加购数")
+        missing.append("加购人数")
     reason = (
         f"已覆盖曝光、点击、商详 UV、转化、销售和库存；当前未接入动作编号、优化前后窗口和参考组，"
         f"只能作为主图/详情页/颜色词等动作的过程基线。"
@@ -451,11 +451,11 @@ def build_coverage_gaps(metrics: dict[str, Any]) -> list[str]:
     if compass["rows"] > 0:
         missing = []
         if not compass.get("exposures_returned"):
-            missing.append("曝光人数")
+            missing.append("曝光UV")
         if not compass.get("clicks_returned"):
-            missing.append("点击人数")
+            missing.append("点击量")
         if not compass.get("addcarts_returned"):
-            missing.append("加购数")
+            missing.append("加购人数")
         if missing:
             missing_text = "、".join(missing)
             gaps.append(f"魔方罗盘当前明细未返回{missing_text}；相关点击率/加购率按不可算或降级处理，不把空口径当业务 0。")
@@ -696,7 +696,7 @@ def render_markdown(workbook: Path, metrics: dict[str, Any], insights: list[str]
         "",
         "## 核心指标对比",
         "",
-        f"- 商品过程指标：曝光 {fmt_int_metric(compass, 'exposures')}，点击 {fmt_int_metric(compass, 'clicks')}，商品点击率 {fmt_pct_metric(compass, 'click_rate')}，商详 UV {fmt_int_metric(compass, 'detail_uv')}，购买转化率 {fmt_pct_metric(compass, 'conversion_rate')}，加购率 {fmt_pct_metric(compass, 'addcart_rate')}。",
+        f"- 商品过程指标：曝光UV {fmt_int_metric(compass, 'exposures')}，点击 {fmt_int_metric(compass, 'clicks')}，曝光-点击率/CTR {fmt_pct_metric(compass, 'click_rate')}，商详 UV {fmt_int_metric(compass, 'detail_uv')}，购买转化率 {fmt_pct_metric(compass, 'conversion_rate')}，加购率 {fmt_pct_metric(compass, 'addcart_rate')}。",
         f"- 投放过程指标：唯直达曝光 {fmt_int(vipdirect['impressions'])}、点击 {fmt_int(vipdirect['clicks'])}、CTR {fmt_pct(vipdirect['ctr'])}、CPC {fmt_money(vipdirect['cpc'])}；T-max曝光 {fmt_int(tmax['impressions'])}、点击 {fmt_int(tmax['clicks'])}、CTR {fmt_pct(tmax['ctr'])}、CPC {fmt_money(tmax['cpc'])}。",
         f"- 权益过程指标：礼金触达 {fmt_int_metric(gift, 'touch_users')}、使用人数 {fmt_int_metric(gift, 'used_people')}、使用量 {fmt_int_metric(gift, 'usage_quantity')}；购物车/跨品类券触达 {fmt_int_metric(scene, 'touch_users')}、使用人数 {fmt_int_metric(scene, 'used_people')}、用券量 {fmt_int_metric(scene, 'usage_quantity')}。",
         "- 净效应：当前缺实验组/参考组和动作前后窗口，净效应不可计算，需补数据后再判断单动作机制是否起效。",
@@ -711,7 +711,7 @@ def render_markdown(workbook: Path, metrics: dict[str, Any], insights: list[str]
         "",
         "## 终端商业指标",
         "",
-        f"- 商品销售：销售额 {fmt_money(compass['sales'])}，销售数量 {fmt_int(compass['quantity'])}，客户数 {fmt_int_metric(compass, 'customers')}，下单客户/商详 UV {fmt_pct_metric(compass, 'order_customer_rate')}。",
+        f"- 商品销售：销售额 {fmt_money(compass['sales'])}，销售量 {fmt_int(compass['quantity'])}，客户数 {fmt_int_metric(compass, 'customers')}，下单客户/商详 UV {fmt_pct_metric(compass, 'order_customer_rate')}。",
         f"- 投放成交：唯直达 24小时成交/销售 {fmt_money(vipdirect['sales'])}、ROI {vipdirect['roi']:.2f}；T-max 24小时成交/销售 {fmt_money(tmax['sales'])}、ROI {tmax['roi']:.2f}。",
         f"- 权益成交：礼金订单 {fmt_int_metric(gift, 'orders')}、销售额 {fmt_money_metric(gift, 'sales')}、ROI {fmt_roi_metric(gift)}；购物车/跨品类券订单 {fmt_int_metric(scene, 'orders')}、销售额 {fmt_money_metric(scene, 'sales')}、ROI {fmt_roi_metric(scene)}。",
         "",

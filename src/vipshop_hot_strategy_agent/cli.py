@@ -22,6 +22,7 @@ def add_collect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--compass-table-api", action="store_true", help="魔方改用页面商品表格接口；该接口可能只返回前 10000 条。")
     parser.add_argument("--compass-table-fallback", action="store_true", help="魔方后台导出失败后允许降级页面表格接口；默认不降级，避免 10000 条上限误导。")
     parser.add_argument("--compass-export-required", action="store_true", help="魔方后台导出失败时直接失败，不降级到页面表格接口。")
+    parser.add_argument("--compass-force-new-export", action="store_true", help="魔方强制新建后台导出任务，避免复用旧字段口径的下载中心文件。")
     parser.add_argument("--compass-export-wait-seconds", type=int, default=180, help="等待魔方后台导出生成的秒数；设为 0 只提交任务。")
     parser.add_argument("--compass-export-poll-seconds", type=int, default=5, help="轮询魔方后台导出任务的间隔秒数。")
     parser.add_argument("--compass-export-submit-url", default="", help="魔方后台导出提交接口覆盖，用于页面接口变更时调试。")
