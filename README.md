@@ -21,6 +21,82 @@
 - 中台礼金
 - 中台购物车/跨品类券
 
+## 架构与实现方式
+
+项目分成三层：CLI 编排层、浏览器自动化运行层、报表业务脚本层。CLI 负责参数、输出和分析；浏览器运行层负责准备 9222 CDP Chrome、选择标签页和执行抓虾兼容 phase runtime；业务脚本在页面上下文里调用唯品会页面自己的接口，只读采集并把下载文件解析回 Excel。
+
+```mermaid
+flowchart TD
+  User["用户 / Codex Agent"] --> CLI["vipshop-hot-strategy CLI<br/>cli.py"]
+  CLI --> Params["参数归一化<br/>build_params"]
+  CLI --> Collect["采集编排<br/>collect.py"]
+  CLI --> Analyze["分析输出<br/>analysis.py"]
+
+  Collect --> CdpHarness["CDP Harness<br/>cdp_browser.py"]
+  CdpHarness --> ExistingChrome["复用现有 127.0.0.1:9222 Chrome"]
+  CdpHarness --> AutoChrome["必要时自动打开本项目 profile Chrome"]
+  ExistingChrome --> ChromeTab["明确 tab_id / url_prefix / 自动目标标签页"]
+  AutoChrome --> ChromeTab
+
+  Collect --> Runtime["Vendored Crawshrimp Runtime<br/>crawshrimp_runtime/"]
+  Runtime --> Backend["ChromeCDPBackend<br/>CDP Runtime.evaluate / Page.navigate / Download"]
+  Runtime --> PhaseRunner["WebPhaseRunner<br/>window.__CRAWSHRIMP_PHASE__"]
+  Backend --> ChromeTab
+  PhaseRunner --> Script["页面业务脚本<br/>assets/hot-strategy-tracking-report.js"]
+
+  Script --> Compass["魔方罗盘页面 API<br/>后台导出商品明细"]
+  Script --> VipDirect["唯直达广告页 API<br/>商品 ID 广告明细"]
+  Script --> Tmax["T-max 页面 API<br/>商品打爆效果"]
+  Script --> Bct["BCT 策略中心 API<br/>批量导出商品效果"]
+
+  Compass --> Attachments["附件 / 下载链接 / 页面数据行"]
+  VipDirect --> Attachments
+  Tmax --> Attachments
+  Bct --> Attachments
+
+  Attachments --> Parser["下载中心附件解析<br/>_expand_download_attachments"]
+  Parser --> Workbook["Excel 工作簿<br/>excel_export.py"]
+  Workbook --> Analyze
+  Analyze --> Outputs["analysis.json<br/>strategy.md"]
+```
+
+真实采集是一条明确的只读流水线：
+
+```mermaid
+sequenceDiagram
+  participant U as 用户 / Agent
+  participant C as CLI
+  participant H as cdp_browser.py
+  participant R as crawshrimp_runtime
+  participant P as 唯品会页面
+  participant A as 页面自有 API
+  participant E as Excel / Analysis
+
+  U->>C: vipshop-hot-strategy run / collect
+  C->>C: 解析参数和 5 份报表范围
+  C->>H: ensure_cdp_browser(cdp_url, entry_url)
+  H->>P: 复用 9222 标签页，或自动新建目标标签页
+  C->>R: load_runtime() 加载本项目 vendored runtime
+  R->>P: 注入 assets/hot-strategy-tracking-report.js
+  P->>A: 在页面上下文内 fetch 页面自有接口
+  A-->>P: 返回报表数据、导出任务状态或下载链接
+  P-->>R: 返回 rows / shared / attachment metadata
+  R-->>C: PhaseRunResult
+  C->>E: 下载并解析附件，生成 Excel
+  C->>E: run 命令继续生成 analysis.json / strategy.md
+```
+
+关键实现点：
+
+- `src/vipshop_hot_strategy_agent/cli.py`：定义 `collect`、`analyze`、`run`、`doc-summary` 四个命令，把命令行参数转换为采集参数。
+- `src/vipshop_hot_strategy_agent/cdp_browser.py`：默认先探测 `http://127.0.0.1:9222/json`；不可用时启动本地 Chrome，并使用 `~/.vipshop-hot-strategy-agent/chrome-cdp-profile` 作为隔离 profile。该模块只读 CDP target list，不读取 cookie、token 或浏览器 storage。
+- `src/vipshop_hot_strategy_agent/collect.py`：连接 CDP、加载 vendored runtime、执行多 phase 页面脚本、保存下载中心文件并解析附件。
+- `src/vipshop_hot_strategy_agent/crawshrimp_runtime/`：本项目内置的抓虾兼容运行时，包括 `ChromeCDPBackend`、`WebPhaseRunner`、`DownloadManager` 和协议结构，不再依赖外部 plugin 路径。
+- `assets/hot-strategy-tracking-report.js`：报表业务逻辑。脚本在页面上下文里走 page-owned API：魔方后台商品明细导出、唯直达广告商品明细、T-max 商品打爆、BCT 右上角批量导出商品效果。
+- `src/vipshop_hot_strategy_agent/excel_export.py` 和 `analysis.py`：把采集结果写入 workbook，并把 workbook 分析成 JSON 与中文策略 Markdown。
+
+只读安全边界贯穿整条链路：CDP 只负责打开/选择标签页和执行页面上下文脚本；页面脚本只读取报表、提交报表导出任务、下载报表文件，不修改广告、预算、出价、礼金、优惠券或商品配置。
+
 ## 安装
 
 ```bash
