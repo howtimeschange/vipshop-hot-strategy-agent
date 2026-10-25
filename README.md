@@ -1,7 +1,5 @@
 # 唯品会爆款策略追踪 Agent
 
-**[访问抓虾 Harness 官网 · 查看介绍与下载](https://harness.crawshrimp.com/)**
-
 这是一个独立的 CLI + skill 项目，用来把唯品会爆款策略复盘中常用的 5 份报表采集、导出、分析和策略总结固化成可重复执行的本地工具。
 
 项目默认走只读链路：CLI 会优先复用用户已经登录的 Chrome CDP 9222 会话；如果 `127.0.0.1:9222` 不可用，会自动打开一个本项目专用 profile 的 9222 Chrome。采集仍然调用页面自己的报表接口读取数据，不读取或保存 cookie、token、localStorage、sessionStorage，也不修改广告、礼金、优惠券、预算、出价或商品配置。
